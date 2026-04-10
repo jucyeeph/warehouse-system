@@ -94,6 +94,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
   border:1.5px solid #16a34a;border-radius:10px;padding:12px 14px}
 .locked-code{font-family:monospace;font-weight:800;font-size:15px;flex:1;
   color:#15803d;letter-spacing:.5px}
+.flow-tip{margin-top:10px;padding:10px 12px;border-radius:10px;background:#eff6ff;color:#1d4ed8;font-size:12px;line-height:1.6}
+.flow-tip strong{font-weight:800}
 
 /* PO row */
 .po-row-card{background:#f8fafc;border:1.5px solid var(--border);border-radius:12px;
@@ -229,6 +231,7 @@ input[type=date].inp{-webkit-appearance:none}
               <input class="inp" id="r-ub-box" placeholder="Scan or type box code" autocomplete="off" onblur="tryLockBox()">
               <button class="scan-btn" onclick="openScan('r-ub-box', onBoxScan)">📷</button>
             </div>
+            <div class="flow-tip" id="r-ub-box-tip"><strong>Next:</strong> scan box code first, then keep this box fixed while you add PO photos.</div>
           </div>
           <div id="r-ub-locked" style="display:none">
             <div class="locked-box">
@@ -236,6 +239,7 @@ input[type=date].inp{-webkit-appearance:none}
               <span class="locked-code" id="r-ub-locked-code"></span>
               <button class="btn btn-outline btn-sm" onclick="unlockBox()">🔓 Unlock</button>
             </div>
+            <div class="flow-tip" id="r-ub-po-tip"><strong>Current box fixed.</strong> Continue scanning PO barcodes and taking photos for this box.</div>
           </div>
         </div>
 
@@ -370,6 +374,7 @@ let receiverName = localStorage.getItem('wh_r_name') || '';
 let pcName       = localStorage.getItem('wh_pc_name') || '';
 let currentRole  = ''; // 'r' or 'pc'
 let scanner = null, scanTarget = null, scanCb = null;
+let audioCtx = null;
 
 let boxLocked = false, lockedBoxCode = '';
 let rPoRows = [], rNextId = 1;
@@ -406,6 +411,48 @@ function goNav() {
 }
 
 function todayStr() { return new Date().toLocaleDateString('sv-SE'); }
+function ensureAudioContext() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
+  return audioCtx;
+}
+function playToneSequence(tones) {
+  try {
+    const ctx = ensureAudioContext();
+    let start = ctx.currentTime + 0.01;
+    tones.forEach(t => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = t.type || 'triangle';
+      osc.frequency.setValueAtTime(t.freq, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(t.gain || 0.12, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + t.duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + t.duration + 0.02);
+      start += t.gap || t.duration;
+    });
+  } catch {}
+}
+function playScanSuccess(kind='generic') {
+  if (kind === 'box') {
+    playToneSequence([
+      { freq: 880, duration: 0.08, gap: 0.09, gain: 0.11, type: 'triangle' },
+      { freq: 1174, duration: 0.12, gap: 0.12, gain: 0.13, type: 'sine' }
+    ]);
+    return;
+  }
+  if (kind === 'po') {
+    playToneSequence([
+      { freq: 988, duration: 0.06, gap: 0.07, gain: 0.1, type: 'triangle' },
+      { freq: 1318, duration: 0.06, gap: 0.07, gain: 0.1, type: 'triangle' },
+      { freq: 1568, duration: 0.1, gap: 0.1, gain: 0.12, type: 'sine' }
+    ]);
+    return;
+  }
+  playToneSequence([{ freq: 1046, duration: 0.1, gap: 0.1, gain: 0.11, type: 'triangle' }]);
+}
 
 // ════════════════════════════
 // WORKER NAME
@@ -457,7 +504,15 @@ function openScan(targetId, cb) {
   scanCb = cb;
   document.getElementById('scan-overlay').classList.add('on');
   scanner = new Html5Qrcode('qr-reader');
-  scanner.start({ facingMode:'environment' }, { fps:10, qrbox:{width:240,height:240} },
+  scanner.start({ facingMode:{ ideal:'environment' } }, {
+    fps:12,
+    qrbox:(vw,vh)=>{
+      const edge = Math.max(220, Math.min(320, Math.floor(Math.min(vw, vh) * 0.72)));
+      return { width:edge, height:edge };
+    },
+    rememberLastUsedCamera:true,
+    aspectRatio:1.333334
+  },
     (code) => { closeScan(); if (scanCb) scanCb(code); else { document.getElementById(scanTarget).value=code; toast('✅ Scanned: '+code,'ok'); } },
     () => {}
   ).catch(() => { toast('Cannot access camera. Check permissions.','err'); closeScan(); });
@@ -486,6 +541,7 @@ async function postForm(url, fd) { return fetch(url,{method:'POST',body:fd}).the
 function onArrivalScan(code) {
   document.getElementById('r-arr-box').value = code;
   document.getElementById('r-arr-box').classList.add('ok');
+  playScanSuccess('box');
   toast('✅ Scanned: ' + code, 'ok');
   setTimeout(submitArrival, 200);
 }
@@ -527,6 +583,7 @@ async function loadArrivalHistory() {
 function onBoxScan(code) {
   document.getElementById('r-ub-box').value = code;
   lockBox(code);
+  playScanSuccess('box');
   toast('✅ Box locked: '+code,'ok');
 }
 function tryLockBox() {
@@ -577,7 +634,7 @@ function renderPoRows() {
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} toast('✅ '+code,'ok'); })">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); })">📷</button>
         <button class="pr-del" onclick="removePoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="ph-${row.id}" accept="image/*" capture="environment"
@@ -646,7 +703,7 @@ function renderPcPoRows(){
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} toast('✅ '+code,'ok'); })">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); })">📷</button>
         <button class="pr-del" onclick="removePcPoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="pc-ph-${row.id}" accept="image/*"

@@ -150,32 +150,39 @@ db.exec(`
   "ALTER TABLE po_records ADD COLUMN box_code TEXT NOT NULL DEFAULT ''",
 ].forEach(sql => { try { db.exec(sql); } catch {} });
 
-// ── Photo storage: organized by arrival_date / po_code ────
+function sanitizeCodeSegment(value, fallback='unknown') {
+  const sanitized = String(value || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  return sanitized || fallback;
+}
+function buildPhotoStamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function resolvePhotoMeta(req, { preferArrivalDate=false } = {}) {
+  const rawPo = sanitizeCodeSegment(req.body.po_code, 'unknown');
+  const rawBox = sanitizeCodeSegment(req.body.box_code, preferArrivalDate ? 'no_box' : 'unknown_box');
+  let root = rawBox;
+  if (preferArrivalDate && (!req.body.box_code || rawBox === 'no_box')) {
+    root = sanitizeCodeSegment(req.body.arrival_date, 'unknown_date');
+  }
+  return { rawPo, rawBox, root };
+}
+
+// ── Photo storage: organized by box_code / po_code ────
 const photoStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const rawPo  = (req.body.po_code  || 'unknown').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
-    const rawBox = (req.body.box_code || '').trim();
-    let adate = 'unknown';
-    if (rawBox) {
-      const row = db.prepare('SELECT arrival_date FROM arrivals WHERE box_code=?').get(rawBox);
-      if (row?.arrival_date) adate = row.arrival_date;
-    }
-    const dir = path.join(UPLOADS_DIR, adate, rawPo);
+    const meta = resolvePhotoMeta(req);
+    const dir = path.join(UPLOADS_DIR, meta.root, meta.rawPo);
     fs.mkdirSync(dir, { recursive: true });
-    req._photoRelDir = `${adate}/${rawPo}`;
+    req._photoRelDir = `${meta.root}/${meta.rawPo}`;
+    req._photoMeta = meta;
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const original = (file.originalname || 'photo.jpg').replace(/[^a-zA-Z0-9._\-]/g, '_');
-    const dir = path.join(UPLOADS_DIR, req._photoRelDir || '');
-    const full = path.join(dir, original);
-    if (fs.existsSync(full)) {
-      const ext = path.extname(original);
-      const base = path.basename(original, ext);
-      cb(null, `${base}_${Date.now()}${ext}`);
-    } else {
-      cb(null, original);
-    }
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+    const meta = req._photoMeta || resolvePhotoMeta(req);
+    cb(null, `${meta.rawPo}_${meta.rawBox}_${buildPhotoStamp()}${ext}`);
   }
 });
 const upload = multer({ storage: photoStorage, limits: { fileSize: 30*1024*1024 },
@@ -486,25 +493,20 @@ app.post('/api/po-record/manual', upload.single('photo'), (req, res) => {
   res.json({ success:true, id:r.lastInsertRowid });
 });
 
-// PC operator upload: uses arrival_date as folder (no box_code known)
-// Multer destination needs arrival_date from body — use a separate middleware
+// PC operator upload: keeps date-based fallback when box_code is unknown
 const pcUploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const rawPo = (req.body.po_code || 'unknown').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
-    const adate = (req.body.arrival_date || new Date().toLocaleDateString('sv-SE')).trim();
-    const dir = path.join(UPLOADS_DIR, adate, rawPo);
+    const meta = resolvePhotoMeta(req, { preferArrivalDate:true });
+    const dir = path.join(UPLOADS_DIR, meta.root, meta.rawPo);
     fs.mkdirSync(dir, { recursive: true });
-    req._photoRelDir = `${adate}/${rawPo}`;
+    req._photoRelDir = `${meta.root}/${meta.rawPo}`;
+    req._photoMeta = meta;
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const original = (file.originalname || 'photo.jpg').replace(/[^a-zA-Z0-9._\-]/g, '_');
-    const dir = path.join(UPLOADS_DIR, req._photoRelDir || '');
-    const full = path.join(dir, original);
-    if (fs.existsSync(full)) {
-      const ext = path.extname(original);
-      cb(null, `${path.basename(original, ext)}_${Date.now()}${ext}`);
-    } else { cb(null, original); }
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+    const meta = req._photoMeta || resolvePhotoMeta(req, { preferArrivalDate:true });
+    cb(null, `${meta.rawPo}_${meta.rawBox}_${buildPhotoStamp()}${ext}`);
   }
 });
 const pcUpload = multer({ storage: pcUploadStorage, limits: { fileSize: 30*1024*1024 },
