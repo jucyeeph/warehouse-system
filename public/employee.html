@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Warehouse System</title>
+<style>
+:root{
+  --primary:#2563eb;--success:#16a34a;--danger:#dc2626;--warning:#d97706;
+  --bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
+  background:var(--bg);color:var(--text);min-height:100dvh;overflow-x:hidden}
+
+/* ── SCREENS ── */
+.screen{display:none;min-height:100dvh;flex-direction:column}
+.screen.on{display:flex}
+
+/* ── NAV PAGE ── */
+#nav-screen{background:linear-gradient(160deg,#1e3a8a 0%,#2563eb 55%,#3b82f6 100%);
+  align-items:center;justify-content:center;padding:32px 20px}
+.nav-inner{width:100%;max-width:400px}
+.nav-logo{font-size:54px;text-align:center;margin-bottom:10px}
+.nav-title{color:#fff;font-size:26px;font-weight:800;text-align:center;letter-spacing:-.5px;margin-bottom:6px}
+.nav-sub{color:rgba(255,255,255,.65);font-size:14px;text-align:center;margin-bottom:40px}
+.role-card{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
+  border-radius:18px;padding:22px 24px;cursor:pointer;margin-bottom:16px;
+  backdrop-filter:blur(12px);transition:all .2s;display:flex;align-items:center;gap:16px}
+.role-card:active{transform:scale(.97);background:rgba(255,255,255,.22)}
+.role-card:hover{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4)}
+.role-icon{font-size:36px;flex-shrink:0}
+.role-text{}
+.role-title{color:#fff;font-size:18px;font-weight:700;margin-bottom:3px}
+.role-desc{color:rgba(255,255,255,.65);font-size:12px;line-height:1.5}
+.role-arrow{color:rgba(255,255,255,.5);font-size:20px;margin-left:auto;flex-shrink:0}
+
+/* ── WORKER SCREENS SHARED ── */
+.screen-hdr{height:52px;background:var(--primary);display:flex;align-items:center;
+  padding:0 14px;gap:10px;box-shadow:0 2px 8px rgba(37,99,235,.35);flex-shrink:0}
+.hdr-back{width:36px;height:36px;border:none;background:rgba(255,255,255,.15);
+  border-radius:9px;color:#fff;font-size:18px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;flex-shrink:0}
+.hdr-title{color:#fff;font-size:16px;font-weight:700;flex:1}
+.hdr-worker{background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:16px;
+  padding:4px 11px;font-size:12px;cursor:pointer;font-family:inherit;flex-shrink:0}
+
+/* Tabs */
+.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0}
+.tab-btn{flex:1;height:46px;border:none;background:none;cursor:pointer;font-size:13px;
+  font-weight:600;color:var(--muted);border-bottom:2px solid transparent;
+  font-family:inherit;margin-bottom:-2px;transition:all .15s;display:flex;
+  align-items:center;justify-content:center;gap:5px}
+.tab-btn.on{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* Scrollable content */
+.screen-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px}
+
+/* Panel */
+.panel{display:none}.panel.on{display:block}
+.card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.card-title{font-size:15px;font-weight:700;margin-bottom:14px}
+.fg{margin-bottom:13px}
+.lbl{display:block;font-size:11px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+.rw{display:flex;gap:8px;align-items:stretch}
+.inp{flex:1;height:46px;border:1.5px solid var(--border);border-radius:10px;
+  padding:0 12px;font-size:15px;color:var(--text);background:#fff;outline:none;
+  font-family:inherit;transition:border-color .2s}
+.inp:focus{border-color:var(--primary)}
+.inp.ok{border-color:var(--success);background:#f0fdf4}
+.ta{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;
+  font-size:14px;color:var(--text);background:#fff;outline:none;resize:none;font-family:inherit}
+.ta:focus{border-color:var(--primary)}
+.scan-btn{width:46px;height:46px;background:var(--primary);color:#fff;border:none;
+  border-radius:10px;font-size:20px;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center}
+.btn{height:46px;border:none;border-radius:10px;cursor:pointer;font-size:15px;
+  font-weight:600;display:flex;align-items:center;justify-content:center;
+  gap:6px;font-family:inherit;transition:opacity .15s;width:100%}
+.btn:active{opacity:.75}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-success{background:var(--success);color:#fff}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-ghost{background:#f1f5f9;color:var(--text)}
+.btn-sm{height:36px;font-size:13px}
+.btn-outline{background:#fff;color:var(--primary);border:1.5px solid var(--primary);width:auto;padding:0 14px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* Locked box */
+.locked-box{display:flex;align-items:center;gap:10px;background:#dcfce7;
+  border:1.5px solid #16a34a;border-radius:10px;padding:12px 14px}
+.locked-code{font-family:monospace;font-weight:800;font-size:15px;flex:1;
+  color:#15803d;letter-spacing:.5px}
+
+/* PO row */
+.po-row-card{background:#f8fafc;border:1.5px solid var(--border);border-radius:12px;
+  padding:12px;margin-bottom:10px}
+.pr-top{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+.pr-scan{width:42px;height:42px;background:var(--primary);color:#fff;border:none;
+  border-radius:9px;font-size:18px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.pr-del{width:34px;height:42px;background:#fee2e2;color:var(--danger);border:none;
+  border-radius:9px;cursor:pointer;font-size:15px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.photo-ph{width:100%;height:100px;background:#fff;border-radius:9px;border:2px dashed var(--border);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--muted);font-size:12px;cursor:pointer;gap:4px}
+.photo-ph .pico{font-size:28px}
+.photo-thumb{width:100%;height:100px;object-fit:cover;border-radius:9px;
+  border:1px solid var(--border);display:block;cursor:pointer}
+.empty-hint{text-align:center;padding:16px;color:var(--muted);font-size:13px}
+.divider{border:none;border-top:1px solid var(--border);margin:14px 0}
+
+/* History items */
+.hist-item{background:#fff;border-radius:10px;padding:10px 13px;margin-bottom:8px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;justify-content:space-between;align-items:center}
+.hist-code{font-weight:700;font-size:13px;font-family:monospace}
+.hist-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.hist-badge{background:#dcfce7;color:#15803d;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:600}
+
+/* Scanner overlay */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:flex-end}
+.overlay.on{display:flex}
+.sheet{width:100%;background:#fff;border-radius:20px 20px 0 0;padding:20px;
+  padding-bottom:calc(20px + env(safe-area-inset-bottom,0))}
+.sheet-title{font-size:16px;font-weight:700;text-align:center;margin-bottom:14px}
+#qr-reader{width:100%;border-radius:12px;overflow:hidden}
+.sheet-cancel{width:100%;height:44px;border:none;background:#f1f5f9;border-radius:10px;
+  font-size:15px;cursor:pointer;margin-top:12px;font-family:inherit}
+
+/* Name modal */
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:400;
+  align-items:center;justify-content:center}
+.modal.on{display:flex}
+.modal-box{background:#fff;border-radius:18px;padding:24px;width:calc(100% - 48px);max-width:320px}
+.modal-title{font-size:18px;font-weight:800;text-align:center;margin-bottom:18px}
+
+/* Toast */
+.toast{position:fixed;top:64px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.82);color:#fff;padding:10px 20px;border-radius:20px;
+  font-size:13px;z-index:500;opacity:0;transition:opacity .25s;pointer-events:none;
+  white-space:nowrap;max-width:88vw;text-align:center}
+.toast.ok{background:rgba(22,163,74,.9)}
+.toast.err{background:rgba(220,38,38,.9)}
+.toast.show{opacity:1}
+
+input[type=date].inp{-webkit-appearance:none}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════
+     NAVIGATION PAGE
+═══════════════════════════════════ -->
+<div class="screen on" id="nav-screen">
+  <div class="nav-inner">
+    <div class="nav-logo">📦</div>
+    <div class="nav-title">Warehouse System</div>
+    <div class="nav-sub">Select your role to continue</div>
+
+    <div class="role-card" onclick="enterRole('receiver')">
+      <div class="role-icon">🚚</div>
+      <div class="role-text">
+        <div class="role-title">Receiving & Unboxing Staff</div>
+        <div class="role-desc">Scan incoming boxes · Photograph purchase orders during unboxing</div>
+      </div>
+      <div class="role-arrow">›</div>
+    </div>
+
+    <div class="role-card" onclick="enterRole('pc')">
+      <div class="role-icon">🖥️</div>
+      <div class="role-text">
+        <div class="role-title">PC Operator</div>
+        <div class="role-desc">Upload PO photos by date · Record import errors</div>
+      </div>
+      <div class="role-arrow">›</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════
+     RECEIVER SCREEN
+═══════════════════════════════════ -->
+<div class="screen" id="receiver-screen">
+  <div class="screen-hdr">
+    <button class="hdr-back" onclick="goNav()">←</button>
+    <div class="hdr-title">🚚 Receiving &amp; Unboxing</div>
+    <button class="hdr-worker" id="r-worker-chip" onclick="showNameModal('r')">Set Name</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn on" id="r-tab-arrival" onclick="rTab('arrival')">📦 Arrival Scan</button>
+    <button class="tab-btn" id="r-tab-unboxing" onclick="rTab('unboxing')">📂 Unboxing</button>
+  </div>
+
+  <div class="screen-body">
+
+    <!-- Arrival Panel -->
+    <div class="panel on" id="r-panel-arrival">
+      <div class="card">
+        <div class="card-title">📦 Arrival Scan</div>
+        <div class="fg">
+          <label class="lbl">Arrival Date</label>
+          <input type="date" class="inp" id="r-arr-date" style="width:100%">
+        </div>
+        <div class="fg">
+          <label class="lbl">Box QR Code</label>
+          <div class="rw">
+            <input class="inp" id="r-arr-box" placeholder="Scan or type box code" autocomplete="off">
+            <button class="scan-btn" onclick="openScan('r-arr-box', onArrivalScan)">📷</button>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="submitArrival()">✅ Confirm Arrival</button>
+      </div>
+      <div id="r-arr-history"></div>
+    </div>
+
+    <!-- Unboxing Panel -->
+    <div class="panel" id="r-panel-unboxing">
+      <div class="card">
+        <div class="card-title">📂 Unboxing Photo</div>
+
+        <!-- Box code section -->
+        <div class="fg">
+          <label class="lbl">① Box Code</label>
+          <div id="r-ub-unlocked">
+            <div class="rw">
+              <input class="inp" id="r-ub-box" placeholder="Scan or type box code" autocomplete="off" onblur="tryLockBox()">
+              <button class="scan-btn" onclick="openScan('r-ub-box', onBoxScan)">📷</button>
+            </div>
+          </div>
+          <div id="r-ub-locked" style="display:none">
+            <div class="locked-box">
+              <span>🔒</span>
+              <span class="locked-code" id="r-ub-locked-code"></span>
+              <button class="btn btn-outline btn-sm" onclick="unlockBox()">🔓 Unlock</button>
+            </div>
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- PO rows -->
+        <div class="fg">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <label class="lbl" style="margin:0">② Purchase Orders</label>
+            <button class="btn btn-ghost btn-sm" onclick="addPoRow()" style="width:auto;height:32px;padding:0 12px">＋ Add PO</button>
+          </div>
+          <div id="r-po-rows"></div>
+        </div>
+
+        <button class="btn btn-primary" id="r-submit-unbox" onclick="submitUnboxing()">✅ Submit Unboxing</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════
+     PC OPERATOR SCREEN
+═══════════════════════════════════ -->
+<div class="screen" id="pc-screen">
+  <div class="screen-hdr">
+    <button class="hdr-back" onclick="goNav()">←</button>
+    <div class="hdr-title">🖥️ PC Operator</div>
+    <button class="hdr-worker" id="pc-worker-chip" onclick="showNameModal('pc')">Set Name</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn on" id="pc-tab-upload" onclick="pcTab('upload')">📋 PO Upload</button>
+    <button class="tab-btn" id="pc-tab-error" onclick="pcTab('error')">⚠️ Error Record</button>
+  </div>
+
+  <div class="screen-body">
+
+    <!-- PO Upload Panel -->
+    <div class="panel on" id="pc-panel-upload">
+      <div class="card">
+        <div class="card-title">📋 PO Upload by Date</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+          Use this when the box code is unknown. Set the arrival date, then add each purchase order with its photo.
+        </p>
+
+        <div class="fg">
+          <label class="lbl">Arrival Date</label>
+          <input type="date" class="inp" id="pc-up-date" style="width:100%">
+        </div>
+
+        <hr class="divider">
+
+        <div class="fg">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <label class="lbl" style="margin:0">Purchase Orders</label>
+            <button class="btn btn-ghost btn-sm" onclick="addPcPoRow()" style="width:auto;height:32px;padding:0 12px">＋ Add PO</button>
+          </div>
+          <div id="pc-po-rows"><div class="empty-hint">Tap "+ Add PO" to add a purchase order</div></div>
+        </div>
+
+        <button class="btn btn-primary" id="pc-submit-btn" onclick="submitPcPos()">✅ Submit PO Records</button>
+      </div>
+    </div>
+
+    <!-- Error Record Panel -->
+    <div class="panel" id="pc-panel-error">
+      <div class="card">
+        <div class="card-title">⚠️ Error Record</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+          Use this when an item cannot be imported in the system. Scan the PO barcode and take a photo for admin review.
+        </p>
+
+        <div class="fg">
+          <label class="lbl">① PO Barcode</label>
+          <div class="rw">
+            <input class="inp" id="pc-err-po" placeholder="Scan or type PO code" autocomplete="off">
+            <button class="scan-btn" onclick="openScan('pc-err-po', null)">📷</button>
+          </div>
+        </div>
+
+        <div class="fg">
+          <label class="lbl">② PO Photo (required)</label>
+          <input type="file" id="pc-err-photo-inp" accept="image/*" capture="environment" style="display:none" onchange="onErrPhoto(this)">
+          <div class="photo-ph" id="pc-err-ph-ph" onclick="document.getElementById('pc-err-photo-inp').click()">
+            <div class="pico">📸</div><div>Tap to photograph</div>
+          </div>
+          <img class="photo-thumb" id="pc-err-ph-prev" style="display:none" onclick="document.getElementById('pc-err-photo-inp').click()">
+        </div>
+
+        <div class="fg">
+          <label class="lbl">③ Error Description (optional)</label>
+          <textarea class="ta" id="pc-err-desc" rows="3" placeholder="Describe the issue…"></textarea>
+        </div>
+
+        <button class="btn btn-danger" onclick="submitError()">📝 Submit Error Record</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Scanner overlay -->
+<div class="overlay" id="scan-overlay">
+  <div class="sheet">
+    <div class="sheet-title">Scan QR / Barcode</div>
+    <div id="qr-reader"></div>
+    <button class="sheet-cancel" onclick="closeScan()">Cancel</button>
+  </div>
+</div>
+
+<!-- Name modal -->
+<div class="modal" id="name-modal">
+  <div class="modal-box">
+    <div class="modal-title" id="name-modal-title">Enter Your Name</div>
+    <div class="fg">
+      <input class="inp" id="name-inp" placeholder="Your name" autocomplete="off" style="width:100%"
+             onkeydown="if(event.key==='Enter')saveName()">
+    </div>
+    <button class="btn btn-primary" onclick="saveName()">Confirm</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+// ════════════════════════════
+// STATE
+// ════════════════════════════
+let receiverName = localStorage.getItem('wh_r_name') || '';
+let pcName       = localStorage.getItem('wh_pc_name') || '';
+let currentRole  = ''; // 'r' or 'pc'
+let scanner = null, scanTarget = null, scanCb = null;
+
+let boxLocked = false, lockedBoxCode = '';
+let rPoRows = [], rNextId = 1;
+
+let pcPoRows = [], pcNextId = 1;
+let errPhotoFile = null;
+
+// ════════════════════════════
+// NAVIGATION
+// ════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+}
+
+function enterRole(role) {
+  currentRole = role;
+  if (role === 'receiver') {
+    showScreen('receiver-screen');
+    updateWorkerChip('r');
+    if (!receiverName) showNameModal('r');
+    document.getElementById('r-arr-date').value = todayStr();
+  } else {
+    showScreen('pc-screen');
+    updateWorkerChip('pc');
+    if (!pcName) showNameModal('pc');
+    document.getElementById('pc-up-date').value = todayStr();
+  }
+}
+
+function goNav() {
+  if (scanner) closeScan();
+  showScreen('nav-screen');
+}
+
+function todayStr() { return new Date().toLocaleDateString('sv-SE'); }
+
+// ════════════════════════════
+// WORKER NAME
+// ════════════════════════════
+let nameModalRole = '';
+function showNameModal(role) {
+  nameModalRole = role;
+  const cur = role === 'r' ? receiverName : pcName;
+  document.getElementById('name-inp').value = cur;
+  document.getElementById('name-modal').classList.add('on');
+  setTimeout(() => document.getElementById('name-inp').focus(), 100);
+}
+function saveName() {
+  const n = document.getElementById('name-inp').value.trim();
+  if (!n) { toast('Please enter your name', 'err'); return; }
+  if (nameModalRole === 'r') { receiverName = n; localStorage.setItem('wh_r_name', n); }
+  else                       { pcName = n;       localStorage.setItem('wh_pc_name', n); }
+  document.getElementById('name-modal').classList.remove('on');
+  updateWorkerChip(nameModalRole);
+  toast(`Welcome, ${n}!`, 'ok');
+}
+function updateWorkerChip(role) {
+  const name = role === 'r' ? receiverName : pcName;
+  const id   = role === 'r' ? 'r-worker-chip' : 'pc-worker-chip';
+  document.getElementById(id).textContent = name ? `👤 ${name}` : 'Set Name';
+}
+
+// ════════════════════════════
+// TABS
+// ════════════════════════════
+function rTab(t) {
+  ['arrival','unboxing'].forEach(x => {
+    document.getElementById(`r-tab-${x}`).classList.toggle('on', x===t);
+    document.getElementById(`r-panel-${x}`).classList.toggle('on', x===t);
+  });
+}
+function pcTab(t) {
+  ['upload','error'].forEach(x => {
+    document.getElementById(`pc-tab-${x}`).classList.toggle('on', x===t);
+    document.getElementById(`pc-panel-${x}`).classList.toggle('on', x===t);
+  });
+}
+
+// ════════════════════════════
+// SCANNER
+// ════════════════════════════
+function openScan(targetId, cb) {
+  scanTarget = targetId;
+  scanCb = cb;
+  document.getElementById('scan-overlay').classList.add('on');
+  scanner = new Html5Qrcode('qr-reader');
+  scanner.start({ facingMode:'environment' }, { fps:10, qrbox:{width:240,height:240} },
+    (code) => { closeScan(); if (scanCb) scanCb(code); else { document.getElementById(scanTarget).value=code; toast('✅ Scanned: '+code,'ok'); } },
+    () => {}
+  ).catch(() => { toast('Cannot access camera. Check permissions.','err'); closeScan(); });
+}
+function closeScan() {
+  document.getElementById('scan-overlay').classList.remove('on');
+  if (scanner) { scanner.stop().catch(()=>{}).finally(()=>{ scanner.clear(); scanner=null; document.getElementById('qr-reader').innerHTML=''; }); }
+}
+
+// ════════════════════════════
+// TOAST
+// ════════════════════════════
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = `toast ${type} show`;
+  clearTimeout(el._t); el._t = setTimeout(()=>el.className=`toast ${type}`, 3200);
+}
+
+// Helpers
+async function post(url, data) { return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
+async function postForm(url, fd) { return fetch(url,{method:'POST',body:fd}).then(r=>r.json()); }
+
+// ════════════════════════════════════════
+// RECEIVER: ARRIVAL SCAN
+// ════════════════════════════════════════
+function onArrivalScan(code) {
+  document.getElementById('r-arr-box').value = code;
+  document.getElementById('r-arr-box').classList.add('ok');
+  toast('✅ Scanned: ' + code, 'ok');
+  setTimeout(submitArrival, 200);
+}
+
+async function submitArrival() {
+  if (!receiverName) { showNameModal('r'); return; }
+  const boxCode = document.getElementById('r-arr-box').value.trim();
+  const aDate   = document.getElementById('r-arr-date').value;
+  if (!boxCode) { toast('Please scan or enter box code','err'); return; }
+  try {
+    const r = await post('/api/arrival', { box_code:boxCode, worker_name:receiverName, arrival_date:aDate });
+    if (r.success) {
+      toast('✅ Arrival recorded!','ok');
+      document.getElementById('r-arr-box').value='';
+      document.getElementById('r-arr-box').classList.remove('ok');
+      loadArrivalHistory();
+    } else if (r.error==='该箱码已记录到货') {
+      toast(`⚠️ Already recorded at ${r.scanned_at}`,'err');
+    } else toast('❌ '+(r.error||'Error'),'err');
+  } catch { toast('❌ Network error','err'); }
+}
+
+async function loadArrivalHistory() {
+  try {
+    const list = await fetch('/api/arrival/recent?limit=5').then(r=>r.json());
+    const el = document.getElementById('r-arr-history');
+    if (!Array.isArray(list)||!list.length) { el.innerHTML=''; return; }
+    el.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:0 4px 8px;text-transform:uppercase;letter-spacing:.4px">Recent Arrivals</div>`
+      + list.map(a=>`<div class="hist-item">
+          <div><div class="hist-code">${a.box_code}</div><div class="hist-meta">${a.worker_name} · ${a.arrival_date||a.scanned_at}</div></div>
+          <div class="hist-badge">Arrived</div>
+        </div>`).join('');
+  } catch {}
+}
+
+// ════════════════════════════════════════
+// RECEIVER: UNBOXING
+// ════════════════════════════════════════
+function onBoxScan(code) {
+  document.getElementById('r-ub-box').value = code;
+  lockBox(code);
+  toast('✅ Box locked: '+code,'ok');
+}
+function tryLockBox() {
+  const val = document.getElementById('r-ub-box').value.trim();
+  if (val && !boxLocked) lockBox(val);
+}
+function lockBox(code) {
+  boxLocked=true; lockedBoxCode=code;
+  document.getElementById('r-ub-unlocked').style.display='none';
+  document.getElementById('r-ub-locked').style.display='block';
+  document.getElementById('r-ub-locked-code').textContent=code;
+  if (!rPoRows.length) addPoRow();
+}
+function unlockBox() {
+  boxLocked=false; lockedBoxCode='';
+  document.getElementById('r-ub-box').value='';
+  document.getElementById('r-ub-unlocked').style.display='block';
+  document.getElementById('r-ub-locked').style.display='none';
+  rPoRows=[]; rNextId=1; renderPoRows();
+}
+
+function addPoRow() {
+  if (!boxLocked) { toast('Please lock a box code first','err'); return; }
+  rPoRows.push({ id:rNextId++, po_code:'', file:null, url:null });
+  renderPoRows();
+}
+function removePoRow(id) {
+  if (rPoRows.length<=1) { toast('Keep at least one row','err'); return; }
+  const r = rPoRows.find(x=>x.id===id);
+  if (r?.url) URL.revokeObjectURL(r.url);
+  rPoRows = rPoRows.filter(x=>x.id!==id);
+  renderPoRows();
+}
+function updateRowCode(id, val) { const r=rPoRows.find(x=>x.id===id); if(r) r.po_code=val; }
+function onRowPhoto(id, inp) {
+  if (!inp.files[0]) return;
+  const r = rPoRows.find(x=>x.id===id); if(!r) return;
+  if (r.url) URL.revokeObjectURL(r.url);
+  r.file=inp.files[0]; r.url=URL.createObjectURL(inp.files[0]);
+  renderPoRows();
+}
+function renderPoRows() {
+  const el = document.getElementById('r-po-rows');
+  if (!rPoRows.length) { el.innerHTML='<div class="empty-hint">No PO added yet</div>'; return; }
+  el.innerHTML = rPoRows.map((row,idx)=>`
+    <div class="po-row-card">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">PO #${idx+1}</div>
+      <div class="pr-top">
+        <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
+          oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} toast('✅ '+code,'ok'); })">📷</button>
+        <button class="pr-del" onclick="removePoRow(${row.id})">✕</button>
+      </div>
+      <input type="file" id="ph-${row.id}" accept="image/*" capture="environment"
+        style="display:none" onchange="onRowPhoto(${row.id},this)">
+      ${row.url
+        ? `<img src="${row.url}" class="photo-thumb" onclick="document.getElementById('ph-${row.id}').click()">`
+        : `<div class="photo-ph" onclick="document.getElementById('ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO</div></div>`}
+    </div>`).join('');
+}
+
+async function submitUnboxing() {
+  if (!receiverName) { showNameModal('r'); return; }
+  if (!boxLocked||!lockedBoxCode) { toast('Please scan a box code first','err'); return; }
+  const toSubmit = rPoRows.filter(r=>r.po_code.trim()&&r.file);
+  if (!toSubmit.length) { toast('Please add at least one PO with photo','err'); return; }
+  for (let i=0;i<rPoRows.length;i++) {
+    const r=rPoRows[i];
+    if (!r.po_code.trim()&&!r.file) continue;
+    if (!r.po_code.trim()) { toast(`PO #${i+1} missing barcode`,'err'); return; }
+    if (!r.file) { toast(`PO #${i+1} missing photo`,'err'); return; }
+  }
+  const btn=document.getElementById('r-submit-unbox');
+  btn.disabled=true; btn.textContent='Submitting…';
+  try {
+    const {session_id}=await post('/api/unboxing/session',{box_code:lockedBoxCode,worker_name:receiverName});
+    let ok=0,fail=0;
+    for (const row of toSubmit) {
+      const fd=new FormData();
+      fd.append('session_id',session_id); fd.append('box_code',lockedBoxCode);
+      fd.append('po_code',row.po_code.trim()); fd.append('photo',row.file);
+      try{ const r2=await postForm('/api/unboxing/po',fd); r2.success?ok++:fail++; }catch{fail++;}
+    }
+    if (!fail) { toast(`✅ Submitted ${ok} PO(s)`,'ok'); unlockBox(); }
+    else toast(`⚠️ ${fail} upload(s) failed`,'err');
+  } catch { toast('❌ Network error','err'); }
+  finally { btn.disabled=false; btn.textContent='✅ Submit Unboxing'; }
+}
+
+// ════════════════════════════════════════
+// PC OPERATOR: PO UPLOAD
+// ════════════════════════════════════════
+function addPcPoRow() {
+  pcPoRows.push({ id:pcNextId++, po_code:'', file:null, url:null });
+  renderPcPoRows();
+}
+function removePcPoRow(id) {
+  const r=pcPoRows.find(x=>x.id===id);
+  if(r?.url) URL.revokeObjectURL(r.url);
+  pcPoRows=pcPoRows.filter(x=>x.id!==id);
+  renderPcPoRows();
+}
+function updatePcRowCode(id,val){ const r=pcPoRows.find(x=>x.id===id); if(r) r.po_code=val; }
+function onPcRowPhoto(id,inp){
+  if (!inp.files[0]) return;
+  const r=pcPoRows.find(x=>x.id===id); if(!r) return;
+  if(r.url) URL.revokeObjectURL(r.url);
+  r.file=inp.files[0]; r.url=URL.createObjectURL(inp.files[0]);
+  renderPcPoRows();
+}
+function renderPcPoRows(){
+  const el=document.getElementById('pc-po-rows');
+  if(!pcPoRows.length){el.innerHTML='<div class="empty-hint">Tap "+ Add PO" to add a purchase order</div>';return;}
+  el.innerHTML=pcPoRows.map((row,idx)=>`
+    <div class="po-row-card">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">PO #${idx+1}</div>
+      <div class="pr-top">
+        <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
+          oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} toast('✅ '+code,'ok'); })">📷</button>
+        <button class="pr-del" onclick="removePcPoRow(${row.id})">✕</button>
+      </div>
+      <input type="file" id="pc-ph-${row.id}" accept="image/*"
+        style="display:none" onchange="onPcRowPhoto(${row.id},this)">
+      ${row.url
+        ?`<img src="${row.url}" class="photo-thumb" onclick="document.getElementById('pc-ph-${row.id}').click()">`
+        :`<div class="photo-ph" onclick="document.getElementById('pc-ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO</div></div>`}
+    </div>`).join('');
+}
+
+async function submitPcPos(){
+  if(!pcName){showNameModal('pc');return;}
+  const aDate=document.getElementById('pc-up-date').value;
+  if(!aDate){toast('Please select arrival date','err');return;}
+  const toSubmit=pcPoRows.filter(r=>r.po_code.trim()&&r.file);
+  if(!toSubmit.length){toast('Please add at least one PO with photo','err');return;}
+  for(let i=0;i<pcPoRows.length;i++){
+    const r=pcPoRows[i];
+    if(!r.po_code.trim()&&!r.file) continue;
+    if(!r.po_code.trim()){toast(`PO #${i+1} missing barcode`,'err');return;}
+    if(!r.file){toast(`PO #${i+1} missing photo`,'err');return;}
+  }
+  const btn=document.getElementById('pc-submit-btn');
+  btn.disabled=true; btn.textContent='Submitting…';
+  try{
+    let ok=0,fail=0;
+    for(const row of toSubmit){
+      const fd=new FormData();
+      fd.append('po_code',row.po_code.trim());
+      fd.append('arrival_date',aDate);
+      fd.append('worker_name',pcName);
+      fd.append('photo',row.file);
+      try{ const r2=await postForm('/api/po-record/pc',fd); r2.success?ok++:fail++; }catch{fail++;}
+    }
+    if(!fail){
+      toast(`✅ Submitted ${ok} PO(s)`,'ok');
+      pcPoRows=[]; pcNextId=1; renderPcPoRows();
+    } else toast(`⚠️ ${fail} upload(s) failed`,'err');
+  }catch{toast('❌ Network error','err');}
+  finally{btn.disabled=false;btn.textContent='✅ Submit PO Records';}
+}
+
+// ════════════════════════════════════════
+// PC OPERATOR: ERROR RECORD
+// ════════════════════════════════════════
+function onErrPhoto(inp){
+  if(!inp.files[0]) return;
+  errPhotoFile=inp.files[0];
+  const fr=new FileReader();
+  fr.onload=e=>{
+    document.getElementById('pc-err-ph-prev').src=e.target.result;
+    document.getElementById('pc-err-ph-prev').style.display='block';
+    document.getElementById('pc-err-ph-ph').style.display='none';
+  };
+  fr.readAsDataURL(inp.files[0]);
+}
+async function submitError(){
+  if(!pcName){showNameModal('pc');return;}
+  const poCode=document.getElementById('pc-err-po').value.trim();
+  const desc=document.getElementById('pc-err-desc').value.trim();
+  if(!poCode){toast('Please enter PO barcode','err');return;}
+  if(!errPhotoFile){toast('Please take a photo','err');return;}
+  const fd=new FormData();
+  fd.append('po_code',poCode); fd.append('error_description',desc);
+  fd.append('worker_name',pcName); fd.append('photo',errPhotoFile);
+  try{
+    const r=await postForm('/api/error',fd);
+    if(r.success){
+      toast('✅ Error record submitted','ok');
+      document.getElementById('pc-err-po').value='';
+      document.getElementById('pc-err-po').classList.remove('ok');
+      document.getElementById('pc-err-desc').value='';
+      errPhotoFile=null;
+      document.getElementById('pc-err-ph-prev').style.display='none';
+      document.getElementById('pc-err-ph-ph').style.display='flex';
+    } else toast('❌ '+(r.error||'Error'),'err');
+  }catch{toast('❌ Network error','err');}
+}
+
+// ════════════════════════════
+// INIT
+// ════════════════════════════
+window.addEventListener('DOMContentLoaded',()=>{
+  loadArrivalHistory();
+});
+</script>
+</body>
+</html>

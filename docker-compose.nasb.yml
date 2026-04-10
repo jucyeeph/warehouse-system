@@ -1,0 +1,29 @@
+version: '3.8'
+
+# NAS-B（办公室端）部署配置
+# data 目录指向 Synology Drive 同步目录（请修改路径）
+
+services:
+  warehouse-admin:
+    build: ./server
+    container_name: warehouse-nasb
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      # ⭐ 修改此路径为 Drive 同步目录实际路径
+      - /volume1/homes/admin/Drive/warehouse-data:/data
+      # 静态文件（NAS-B 的 public 目录）
+      - ./public:/public:ro
+      # ⭐ 用 NAS-B 专属的导航 index.html 覆盖
+      - ./public-nasb/index.html:/public/index.html:ro
+    environment:
+      - PORT=3000
+      - DB_PATH=/data/warehouse.db
+      - UPLOADS_DIR=/data/uploads
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

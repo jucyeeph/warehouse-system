@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>仓库管理 · 管理端</title>
+<style>
+:root{
+  --primary:#2563eb;--success:#16a34a;--danger:#dc2626;--warning:#d97706;
+  --bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ─ Shell: flex column, header+chrome are flex items, #ca fills the rest ─ */
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;
+  background:var(--bg);color:var(--text);font-size:14px;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;
+}
+
+/* Header */
+.hdr{flex-shrink:0;height:54px;background:var(--primary);display:flex;align-items:center;
+  padding:0 20px;gap:14px;box-shadow:0 2px 8px rgba(37,99,235,.35);z-index:10}
+.hdr h1{color:#fff;font-size:16px;font-weight:800;white-space:nowrap}
+.sc{background:rgba(255,255,255,.15);color:#fff;border-radius:7px;padding:3px 10px;font-size:12px;white-space:nowrap}
+.sc b{font-size:13px;margin-right:2px}
+.sc.alert{background:rgba(220,38,38,.4)}
+
+/* Tab nav */
+.tabnav{flex-shrink:0;height:44px;background:#fff;border-bottom:2px solid var(--border);
+  display:flex;z-index:9;overflow-x:auto;overflow-y:hidden}
+.tabnav::-webkit-scrollbar{display:none}
+.tnb{height:100%;padding:0 15px;border:none;background:none;cursor:pointer;font-size:13px;
+  font-weight:600;color:var(--muted);border-bottom:2px solid transparent;font-family:inherit;
+  display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;margin-bottom:-2px;transition:all .15s}
+.tnb.on{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* Chrome: filter + date bars (non-scrolling wrapper, flex-shrink:0) */
+#chrome{flex-shrink:0;background:#fff}
+
+/* Filter bars inside chrome — shown/hidden by JS */
+.fbar{display:none;height:46px;padding:0 14px;border-bottom:1px solid var(--border);
+  align-items:center;gap:8px;overflow-x:auto;
+  box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.fbar.on{display:flex}
+.fbar::-webkit-scrollbar{height:3px}
+.fbar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.flbl{font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap}
+
+/* Date bar — inside chrome, only box tab shows it */
+#date-bar{display:none;height:48px;background:#f8fafc;border-bottom:1px solid var(--border);
+  align-items:center;gap:6px;padding:0 14px;overflow-x:auto}
+#date-bar.on{display:flex}
+#date-bar::-webkit-scrollbar{height:3px}
+#date-bar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.date-btn{flex-shrink:0;height:34px;border:1.5px solid var(--border);border-radius:9px;
+  background:#fff;cursor:pointer;padding:0 12px;font-size:12px;font-weight:600;
+  color:var(--muted);white-space:nowrap;transition:all .15s;line-height:1}
+.date-btn:hover{border-color:var(--primary);color:var(--primary)}
+.date-btn.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.date-btn .cnt{font-size:11px;opacity:.8;margin-left:4px}
+
+/* Content area — fills all remaining height automatically */
+#ca{flex:1;overflow:auto;min-height:0}
+
+/* Tab pages */
+.tpage{display:none}
+.tpage.on{display:block}
+.pad{padding:16px}
+
+/* Cards etc */
+.card{background:var(--card);border-radius:12px;margin-bottom:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);overflow:hidden}
+.card-hd{padding:11px 16px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;gap:8px}
+.card-title{font-size:14px;font-weight:700}
+.card-body{padding:14px 16px}
+.inp{height:34px;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;
+  font-size:13px;color:var(--text);background:#fff;outline:none;font-family:inherit;transition:border-color .2s}
+.inp:focus{border-color:var(--primary)}
+select.inp{cursor:pointer}
+.btn{height:32px;border:none;border-radius:7px;cursor:pointer;font-size:12px;
+  font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  font-family:inherit;padding:0 11px;transition:opacity .15s;white-space:nowrap}
+.btn:hover{opacity:.88}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-success{background:var(--success);color:#fff}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-warn{background:var(--warning);color:#fff}
+.btn-outline{background:#fff;color:var(--primary);border:1.5px solid var(--primary)}
+.btn-ghost{background:#f1f5f9;color:var(--text)}
+.btn-sm{height:26px;font-size:11px;padding:0 7px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.b-p{background:#fef3c7;color:#92400e}.b-r{background:#dbeafe;color:#1e40af}
+.b-s{background:#dcfce7;color:#15803d}.b-e{background:#fee2e2;color:#991b1b}
+.b-n{background:#dcfce7;color:#15803d}.b-w{background:#fef3c7;color:#b45309}
+.code{font-family:monospace;font-size:12px;font-weight:700;letter-spacing:.3px}
+.empty{text-align:center;padding:40px;color:var(--muted)}
+.empty-ic{font-size:36px;margin-bottom:8px}
+.loading{text-align:center;padding:28px;color:var(--muted);font-size:13px}
+textarea.inp{height:auto;padding:8px 10px;resize:vertical}
+
+/* Error table */
+.etbl{width:100%;border-collapse:collapse}
+.etbl th{background:#f8fafc;font-size:11px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.3px;padding:8px 12px;text-align:left;
+  border-bottom:1px solid var(--border);white-space:nowrap}
+.etbl td{padding:7px 12px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.etbl tr:last-child td{border-bottom:none}
+.erow{cursor:pointer;transition:background .1s}
+.erow:hover td{background:#f0f9ff}
+.erow.sel td{background:#eff6ff}
+.erow td:first-child{border-left:3px solid transparent}
+.erow.sel td:first-child{border-left-color:var(--primary)}
+.detail-view{display:none;flex-direction:row;height:400px;border-top:1px solid var(--border)}
+.detail-view.on{display:flex}
+.dp{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)}
+.dp:last-child{border-right:none}
+.dp-hd{padding:8px 13px;background:#fff;border-bottom:1px solid var(--border);font-size:13px;
+  font-weight:700;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.dp-body{flex:1;overflow-y:auto;padding:12px;min-height:0}
+.dp-scroll{flex:1;overflow-y:auto;min-height:0}
+.detail-img{width:100%;border-radius:9px;object-fit:contain;max-height:200px;
+  border:1px solid var(--border);cursor:zoom-in;background:#f8fafc;display:block;margin-bottom:10px}
+.ig{display:grid;grid-template-columns:74px 1fr;gap:4px 8px;font-size:12px;margin-bottom:10px}
+.ig .lk{color:var(--muted);font-weight:600;align-self:start;padding-top:1px}
+.po-thumb{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background .1s;align-items:flex-start}
+.po-thumb:hover{background:#f0f9ff}
+.po-thumb.sel{background:#eff6ff;border-left:3px solid var(--primary)}
+.ti{flex-shrink:0;width:56px;height:56px;border-radius:7px;overflow:hidden;
+  background:#f8fafc;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px}
+.ti img{width:100%;height:100%;object-fit:cover}
+.tc{font-family:monospace;font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px}
+.tm{font-size:11px;color:var(--muted);line-height:1.6}
+.preview-img{width:100%;border-radius:9px;object-fit:contain;max-height:240px;
+  border:1px solid var(--border);cursor:zoom-in;background:#f8fafc;display:block}
+.mg{display:grid;grid-template-columns:84px 1fr;gap:4px 8px;font-size:12px;margin-top:10px}
+.mg .lk{color:var(--muted);font-weight:600}
+.review-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:11px;margin-top:10px}
+.rv-title{font-size:11px;font-weight:700;color:#15803d;margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px}
+.lk-banner{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:10px}
+.lk-banner-t{font-size:11px;font-weight:700;color:#1e40af;margin-bottom:4px}
+
+/* ── BOX TABLE ── */
+#box-table-wrap{overflow:auto}
+#box-table{border-collapse:collapse;min-width:max-content;table-layout:fixed}
+#box-table thead th{
+  position:sticky;top:0;z-index:5;
+  background:#1e293b;color:#fff;
+  font-size:12px;font-weight:700;
+  padding:8px 6px;text-align:center;
+  border-right:1px solid #374151;
+  min-width:78px;white-space:nowrap
+}
+#box-table thead th.seq-th{
+  position:sticky;left:0;z-index:6;
+  background:#0f172a;min-width:48px;width:48px;font-size:11px
+}
+#box-table tbody td{
+  border:1px solid var(--border);
+  height:44px;text-align:center;
+  font-size:11px;font-weight:700;
+  padding:2px 4px;vertical-align:middle;
+  cursor:pointer;transition:background .1s;
+  min-width:78px;width:78px
+}
+#box-table tbody td.seq-td{
+  position:sticky;left:0;z-index:2;
+  background:#f8fafc;color:var(--muted);
+  font-size:12px;border-right:2px solid var(--border);
+  cursor:default;width:48px;min-width:48px
+}
+#box-table tbody td.cell-arrived{background:#fef9c3;color:#854d0e}
+#box-table tbody td.cell-arrived:hover{background:#fde68a}
+#box-table tbody td.cell-missing{background:#fff;color:#dc2626;border-style:dashed}
+#box-table tbody td.cell-missing:hover{background:#fff5f5}
+#box-table tbody td.cell-empty{background:#f8fafc;cursor:default}
+#box-table tbody td.cell-hl{background:#fde68a!important;color:#78350f}
+#box-table tbody td.cell-batch-sel{
+  outline:2.5px solid var(--primary);
+  outline-offset:-2px;
+  background:#eff6ff!important;color:#1e40af
+}
+#box-table thead th .th-types{font-size:10px;font-weight:400;opacity:.75;margin-top:2px;white-space:normal;line-height:1.3}
+.cell-in{line-height:1.2;pointer-events:none}
+.cell-in .ct{font-size:10px;font-weight:600;opacity:.7}
+.cell-in .cs{font-size:12px;font-weight:800}
+
+/* Stats bar (bottom fixed) */
+#stats-bar{display:none;position:fixed;bottom:0;left:0;right:0;
+  background:var(--primary);color:#fff;padding:8px 20px;z-index:80;
+  align-items:center;gap:16px;flex-wrap:wrap;font-size:13px}
+#stats-bar.on{display:flex}
+
+/* Batch bar */
+#batch-bar{display:none;position:fixed;bottom:0;left:0;right:0;
+  background:#1e293b;color:#fff;padding:10px 20px;z-index:81;
+  align-items:center;gap:10px;flex-wrap:wrap}
+#batch-bar.on{display:flex}
+
+/* PO gallery */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.gitem{background:#f8fafc;border-radius:9px;border:1px solid var(--border);overflow:hidden;cursor:pointer;transition:border-color .15s}
+.gitem:hover{border-color:var(--primary)}
+.gitem img{width:100%;height:112px;object-fit:cover;display:block}
+.gitem-ni{width:100%;height:112px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:26px}
+.gitem-meta{padding:7px 9px;font-size:11px;color:var(--muted);line-height:1.55}
+.gitem-code{font-family:monospace;font-size:12px;font-weight:700;color:var(--text)}
+.result-section{padding:12px 16px;border-bottom:1px solid var(--border)}
+.result-section:last-child{border-bottom:none}
+.rst{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px}
+
+/* Import / DB */
+#drop-zone{border:2px dashed var(--border);border-radius:12px;padding:28px;
+  text-align:center;cursor:pointer;transition:all .2s;background:#fafbfc}
+#drop-zone.drag-over{border-color:var(--primary);background:#eff6ff}
+.ilog-row{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px}
+.ilog-row:last-child{border-bottom:none}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.stat-card{background:var(--card);border-radius:11px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.stat-card .sv{font-size:28px;font-weight:800;line-height:1;margin-bottom:3px}
+.stat-card .sl{font-size:12px;color:var(--muted);font-weight:600}
+
+/* Modals */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal-box{background:#fff;border-radius:14px;padding:20px;width:calc(100% - 40px);max-width:440px;max-height:90vh;overflow-y:auto}
+.modal-title{font-size:15px;font-weight:800;margin-bottom:14px}
+.mfg{margin-bottom:11px}
+.mfg label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.modal-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.confirm-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:600;align-items:center;justify-content:center}
+.confirm-overlay.show{display:flex}
+.confirm-box{background:#fff;border-radius:13px;padding:20px;width:calc(100% - 48px);max-width:300px;text-align:center}
+.confirm-msg{font-size:14px;line-height:1.6;margin-bottom:18px}
+.confirm-actions{display:flex;gap:10px;justify-content:center}
+.lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:999;align-items:center;justify-content:center;cursor:zoom-out}
+.lightbox.show{display:flex}
+.lightbox img{max-width:92vw;max-height:92vh;object-fit:contain;border-radius:7px}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:9999;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap}
+.toast.ok{background:rgba(22,163,74,.9)}
+.toast.err{background:rgba(220,38,38,.9)}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <h1>📦 仓库管理</h1>
+  <div style="display:flex;gap:8px;margin-left:auto" id="stats-hdr"><div class="sc">加载中…</div></div>
+</header>
+
+<nav class="tabnav">
+  <button class="tnb on" id="tn-box"    onclick="goTab('box')">📦 箱子管理器</button>
+  <button class="tnb"    id="tn-errors" onclick="goTab('errors')">⚠️ 错误订单核对</button>
+  <button class="tnb"    id="tn-po"     onclick="goTab('po')">📋 采购单管理器</button>
+  <button class="tnb"    id="tn-import" onclick="goTab('import')">📥 批量导入</button>
+  <button class="tnb"    id="tn-db"     onclick="goTab('db')">🗄️ 数据库管理</button>
+</nav>
+
+<!-- Chrome: filter bars + date bar (flex children of body) -->
+<div id="chrome">
+<div class="fbar" id="fb-box">
+  <input class="inp" id="box-inp" placeholder="输入箱码定位…" style="width:220px" onkeydown="if(event.key==='Enter')jumpBox()">
+  <button class="btn btn-primary" onclick="jumpBox()">🔍 定位</button>
+  <button class="btn btn-ghost" onclick="loadBoxData()">🔄 刷新</button>
+  <div style="flex:1"></div>
+  <button class="btn btn-warn" id="batch-toggle-btn" onclick="toggleBatch()">⚡ 批量修改</button>
+</div>
+<div class="fbar" id="fb-errors">
+  <span class="flbl">状态</span>
+  <select class="inp" id="ef-status" onchange="loadErrors()" style="width:90px">
+    <option value="">全部</option><option value="pending">待审核</option>
+    <option value="reviewed">已审核</option><option value="resolved">已解决</option>
+  </select>
+  <span class="flbl">日期</span>
+  <input type="date" class="inp" id="ef-from" onchange="loadErrors()" style="width:130px">
+  <span style="color:var(--muted);font-size:12px">至</span>
+  <input type="date" class="inp" id="ef-to" onchange="loadErrors()" style="width:130px">
+  <input class="inp" id="ef-po" placeholder="采购单码" style="width:130px" oninput="debErr()">
+  <button class="btn btn-ghost" onclick="clearEF()">清除</button>
+  <span id="err-cnt" style="font-size:12px;color:var(--muted)"></span>
+</div>
+<div class="fbar" id="fb-po">
+  <input class="inp" id="po-inp" placeholder="按采购单码筛选…" style="width:200px" oninput="debPo()">
+  <span class="flbl">排序</span>
+  <select class="inp" id="po-sort" onchange="loadPoAll()" style="width:120px">
+    <option value="created_at_DESC">开箱时间↓</option><option value="created_at_ASC">开箱时间↑</option>
+    <option value="po_code_ASC">单号A→Z</option><option value="po_code_DESC">单号Z→A</option>
+  </select>
+  <span id="po-count" style="font-size:12px;color:var(--muted)"></span>
+  <div style="flex:1"></div>
+  <button class="btn btn-success" onclick="showMpoModal()">＋ 手动补录</button>
+</div>
+
+<!-- Arrival date bar (box manager) -->
+<div id="date-bar"></div>
+</div><!-- #chrome -->
+
+<!-- Content area -->
+<div id="ca">
+
+  <!-- ══ BOX MANAGER ══ -->
+  <div class="tpage on" id="page-box">
+    <div id="box-table-wrap">
+      <table id="box-table"><tbody><tr><td class="loading" style="border:none">加载中…</td></tr></tbody></table>
+    </div>
+    <!-- Stats bottom (hidden by default, shown when date selected) -->
+    <div style="height:44px"></div><!-- spacer for stats bar -->
+  </div>
+
+  <!-- ══ ERROR REVIEW ══ -->
+  <div class="tpage" id="page-errors">
+    <div style="overflow-x:auto">
+      <table class="etbl">
+        <thead><tr><th>采购单码</th><th>提交时间</th><th>提交人</th><th>错误描述</th><th>状态</th><th>关联</th><th>操作</th></tr></thead>
+        <tbody id="err-tbody"><tr><td colspan="7" class="loading">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="detail-view" id="detail-view">
+      <div class="dp" style="flex:1.2">
+        <div class="dp-hd"><span>📌 错误详情</span><button class="btn btn-ghost btn-sm" onclick="closeDetail()">✕ 关闭</button></div>
+        <div class="dp-body" id="dp-left"><div class="empty"><div class="empty-ic">👈</div>选择上方记录</div></div>
+      </div>
+      <div class="dp" style="flex:1">
+        <div class="dp-hd" id="mid-title">📋 同采购单开箱记录</div>
+        <div class="dp-scroll" id="dp-mid"><div class="empty"><div class="empty-ic">📭</div>暂无</div></div>
+      </div>
+      <div class="dp" style="flex:1">
+        <div class="dp-hd">🔍 预览</div>
+        <div class="dp-body" id="dp-right"><div class="empty"><div class="empty-ic">👈</div>点击中间列表</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ PO MANAGER ══ -->
+  <div class="tpage pad" id="page-po">
+    <div id="po-result"><div class="loading">加载中…</div></div>
+  </div>
+
+  <!-- ══ IMPORT ══ -->
+  <div class="tpage pad" id="page-import">
+    <div style="max-width:700px;margin:0 auto">
+      <div class="card" id="imp-s1">
+        <div class="card-hd"><div class="card-title">📥 Excel / CSV 批量导入到货记录</div></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:14px">
+            必填列：<b>箱码</b>；选填：<b>到货日期</b>（格式 2026-03-15）、<b>操作人</b>、<b>备注</b>。表头中英文均可，顺序不限。
+          </p>
+          <div style="margin-bottom:14px"><a href="/api/import/template" class="btn btn-outline" style="text-decoration:none">📄 下载模板</a></div>
+          <div id="drop-zone" onclick="document.getElementById('imp-inp').click()"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')" ondrop="handleDrop(event)">
+            <div style="font-size:36px;margin-bottom:8px">📂</div>
+            <div style="font-size:14px;font-weight:600;margin-bottom:4px">点击选择或拖拽文件</div>
+            <div style="font-size:12px;color:var(--muted)">.xlsx / .xls / .csv，最大10MB</div>
+          </div>
+          <input type="file" id="imp-inp" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFileSelect(this)">
+        </div>
+      </div>
+      <div class="card" id="imp-s2" style="display:none">
+        <div class="card-hd">
+          <div class="card-title" id="imp-s2-title">预览</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer">
+              <input type="checkbox" id="skip-dup" checked style="accent-color:var(--primary)"> 跳过已存在
+            </label>
+            <button class="btn btn-ghost btn-sm" onclick="resetImport()">↩ 重选</button>
+          </div>
+        </div>
+        <div style="overflow:auto;max-height:360px">
+          <table class="etbl" id="imp-tbl">
+            <thead><tr>
+              <th style="width:28px"><input type="checkbox" id="imp-all" checked onchange="toggleAllImp(this)" style="accent-color:var(--primary)"></th>
+              <th>行</th><th>箱码</th><th>到货日期</th><th>操作人</th><th>备注</th><th>状态</th>
+            </tr></thead>
+            <tbody id="imp-tbody"></tbody>
+          </table>
+        </div>
+        <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span id="imp-summary" style="font-size:13px;color:var(--muted)"></span>
+          <button class="btn btn-primary" id="imp-confirm-btn" onclick="confirmImport()" style="margin-left:auto">✅ 确认导入</button>
+        </div>
+      </div>
+      <div class="card" id="imp-s3" style="display:none">
+        <div class="card-hd"><div class="card-title">📊 导入结果</div></div>
+        <div class="card-body" id="imp-result"></div>
+        <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="resetImport()">📥 继续导入</button>
+          <button class="btn btn-ghost" onclick="goTab('box')">📦 查看箱子</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-title">📋 导入记录（可撤回）</div><button class="btn btn-ghost btn-sm" onclick="loadImpLogs()">🔄</button></div>
+        <div id="imp-log-body"><div class="loading">加载中…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ DB MANAGEMENT ══ -->
+  <div class="tpage pad" id="page-db">
+    <div style="max-width:700px;margin:0 auto">
+      <div class="card">
+        <div class="card-hd"><div class="card-title">📤 导出数据库</div></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:14px">
+            导出包含三个工作表：<b>到货记录、采购单记录、错误记录</b>。<br>
+            可修改后重新导入，系统会按ID或箱码匹配并更新数据。
+          </p>
+          <a href="/api/db/export" class="btn btn-primary" style="text-decoration:none">📥 下载数据库Excel</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-title">📥 导入更新数据库</div></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:14px">
+            上传修改后的Excel，系统将：<br>
+            • <b>到货记录</b>：按箱码匹配，更新到货日期/备注，或新增<br>
+            • <b>采购单记录</b>：按ID匹配，更新采购单码/备注<br>
+            • <b>错误记录</b>：按ID匹配，更新描述/审核状态/备注
+          </p>
+          <input type="file" id="db-imp-inp" accept=".xlsx,.xls" style="display:none" onchange="doDbImport(this)">
+          <button class="btn btn-warn" onclick="document.getElementById('db-imp-inp').click()">📂 选择文件并导入</button>
+          <div id="db-imp-result" style="margin-top:12px;font-size:13px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #ca -->
+
+<!-- Bottom bars -->
+<div id="stats-bar">
+  <span id="stats-bar-content">...</span>
+</div>
+<div id="batch-bar">
+  <span style="font-size:13px;white-space:nowrap">已选 <b id="batch-cnt">0</b> 个</span>
+  <input type="date" class="inp" id="batch-date" style="height:30px;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff">
+  <button class="btn btn-success" onclick="applyBatch()" style="height:30px">✅ 应用日期</button>
+  <button class="btn btn-ghost" onclick="clearBatchSel()" style="height:30px">清除选择</button>
+</div>
+
+<!-- Box side panel -->
+<div id="box-side" style="display:none;position:fixed;top:calc(var(--hdr)+var(--tabnav));right:0;
+  width:360px;max-width:96vw;bottom:0;background:#fff;border-left:1px solid var(--border);
+  overflow-y:auto;z-index:120;box-shadow:-4px 0 20px rgba(0,0,0,.1)"></div>
+
+<!-- Cell edit popup -->
+<div id="cell-popup" style="display:none;position:fixed;z-index:200;background:#fff;
+  border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.2);padding:14px;width:240px">
+  <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text)" id="cell-popup-title">编辑到货日期</div>
+  <div style="margin-bottom:10px">
+    <input type="date" class="inp" id="cell-popup-date" style="width:100%">
+  </div>
+  <div style="display:flex;gap:7px">
+    <button class="btn btn-primary" onclick="saveCellDate()" style="flex:1;height:30px">✅ 保存</button>
+    <button class="btn btn-ghost" onclick="closeCellPopup()" style="height:30px">取消</button>
+  </div>
+</div>
+
+<!-- Manual PO Modal -->
+<div class="modal-overlay" id="mpo-modal">
+  <div class="modal-box">
+    <div class="modal-title">📋 手动补录采购单</div>
+    <div class="mfg"><label>采购单号（必填）</label><input class="inp" id="mpo-code" style="width:100%" placeholder="输入采购单条码"></div>
+    <div class="mfg"><label>关联箱码（选填）</label><input class="inp" id="mpo-box" style="width:100%" placeholder="如 20260315DSH001"></div>
+    <div class="mfg">
+      <label>采购单照片（必填）</label>
+      <input type="file" id="mpo-photo" accept="image/*" style="display:none" onchange="onMpoPhoto(this)">
+      <div id="mpo-ph-ph" onclick="document.getElementById('mpo-photo').click()"
+        style="width:100%;height:90px;background:#f8fafc;border-radius:9px;border:2px dashed var(--border);
+          display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;gap:3px">
+        <span style="font-size:24px">📸</span><span style="font-size:12px">点击选择图片</span>
+      </div>
+      <img id="mpo-ph-prev" src="" style="display:none;width:100%;height:90px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mpo-photo').click()">
+    </div>
+    <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="mpo-notes" rows="2" style="width:100%;height:52px"></textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="submitMpo()">✅ 提交</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('mpo-modal').classList.remove('show')">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal-box"><div class="modal-title" id="editTitle">编辑</div><div id="editBody"></div><div class="modal-actions" id="editActions"></div></div>
+</div>
+
+<!-- Confirm -->
+<div class="confirm-overlay" id="confirmModal">
+  <div class="confirm-box">
+    <div class="confirm-msg" id="confirmMsg">确认删除？</div>
+    <div class="confirm-actions">
+      <button class="btn btn-danger" id="confirmOk">删除</button>
+      <button class="btn btn-ghost" onclick="closeConfirm()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLB()"><img id="lb-img" src=""></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════
+// STATE
+// ════════════════════════════
+let selErrId=null, batchMode=false, batchSel=new Set();
+let importRows=[], mpoPhotoFile=null;
+let tableData=null, arrivalDates=[], selArrDate=null;
+let cellPopupCode=null;
+
+// ════════════════════════════
+// LAYOUT
+// ════════════════════════════
+const FBAR = { box:'fb-box', errors:'fb-errors', po:'fb-po' };
+
+function goTab(t) {
+  ['box','errors','po','import','db'].forEach(x=>{
+    document.getElementById(`page-${x}`).classList.toggle('on',x===t);
+    document.getElementById(`tn-${x}`).classList.toggle('on',x===t);
+  });
+  // Show only the relevant filter bar (they live in #chrome, no calc needed)
+  Object.values(FBAR).forEach(id=>document.getElementById(id).classList.remove('on'));
+  if (FBAR[t]) document.getElementById(FBAR[t]).classList.add('on');
+  // Date bar only for box tab
+  document.getElementById('date-bar').classList.toggle('on', t==='box');
+  document.getElementById('ca').scrollTop=0;
+  if(t==='box')    loadBoxData();
+  if(t==='errors') loadErrors();
+  if(t==='po')     loadPoAll();
+  if(t==='import') loadImpLogs();
+  if(t!=='box'){ hideBatch(); hideStats(); }
+}
+
+// ════════════════════════════
+// UTILS
+// ════════════════════════════
+function toast(msg,type=''){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className=`toast ${type} show`;
+  clearTimeout(el._t); el._t=setTimeout(()=>el.className=`toast ${type}`,3500);
+}
+function openLB(src){ document.getElementById('lb-img').src=src; document.getElementById('lightbox').classList.add('show'); }
+function closeLB(){ document.getElementById('lightbox').classList.remove('show'); }
+function statusBadge(s){
+  const m={pending:'⏳ 待审核',reviewed:'👁 已审核',resolved:'✅ 已解决'};
+  const c={pending:'b-p',reviewed:'b-r',resolved:'b-s'};
+  return `<span class="badge ${c[s]||'b-p'}">${m[s]||s}</span>`;
+}
+async function api(url,opts={}){ return fetch(url,opts).then(r=>r.json()); }
+function showConfirm(msg,cb){
+  document.getElementById('confirmMsg').textContent=msg;
+  document.getElementById('confirmOk').onclick=()=>{ closeConfirm(); cb(); };
+  document.getElementById('confirmModal').classList.add('show');
+}
+function closeConfirm(){ document.getElementById('confirmModal').classList.remove('show'); }
+function showEdit(title,body,actions){
+  document.getElementById('editTitle').textContent=title;
+  document.getElementById('editBody').innerHTML=body;
+  document.getElementById('editActions').innerHTML=actions;
+  document.getElementById('editModal').classList.add('show');
+}
+function closeEdit(){ document.getElementById('editModal').classList.remove('show'); }
+
+async function loadStats(){
+  try{
+    const d=await api('/api/arrivals/dates');
+    const total=d.reduce((s,x)=>s+x.count,0);
+    const pending=(await api('/api/errors?status=pending')).length;
+    document.getElementById('stats-hdr').innerHTML=`
+      <div class="sc">累计到货 <b>${total}</b></div>
+      <div class="sc ${pending>0?'alert':''}">待审错误 <b>${pending}</b></div>
+    `;
+  }catch{}
+}
+
+// ════════════════════════════
+// BOX MANAGER — TABLE VIEW
+// ════════════════════════════
+async function loadBoxData(){
+  document.getElementById('box-table').innerHTML='<tbody><tr><td class="loading" style="border:none;text-align:center;padding:30px">加载中…</td></tr></tbody>';
+  try{
+    [tableData, arrivalDates] = await Promise.all([
+      api('/api/boxes/table'),
+      api('/api/arrivals/dates')
+    ]);
+    renderDateBar();
+    renderTable();
+  }catch{ document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:30px;color:var(--muted)">加载失败</td></tr></tbody>'; }
+}
+
+function renderDateBar(){
+  const bar=document.getElementById('date-bar');
+  if(!arrivalDates.length){ bar.innerHTML='<span style="font-size:12px;color:var(--muted)">暂无到货日期</span>'; return; }
+  bar.innerHTML=arrivalDates.map(d=>`
+    <button class="date-btn ${selArrDate===d.arrival_date?'on':''}" onclick="filterByDate('${d.arrival_date}')">
+      ${d.arrival_date}<span class="cnt">${d.count}箱</span>
+    </button>
+  `).join('');
+}
+
+function filterByDate(date){
+  selArrDate = selArrDate===date ? null : date;
+  renderDateBar();
+  renderTable();
+  updateStatsBar();
+}
+
+function hideStats(){ document.getElementById('stats-bar').classList.remove('on'); }
+function updateStatsBar(){
+  const bar=document.getElementById('stats-bar');
+  if(!selArrDate){ bar.classList.remove('on'); return; }
+  const info=arrivalDates.find(d=>d.arrival_date===selArrDate);
+  if(!info){ bar.classList.remove('on'); return; }
+  bar.classList.add('on');
+  document.getElementById('stats-bar-content').innerHTML=
+    `<b>📅 ${info.arrival_date} 到货：共 ${info.count} 箱</b>　` +
+    info.shipments.map(s=>`${s.display} <b>${s.count}</b>箱`).join('　·　');
+}
+
+function renderTable(){
+  if(!tableData||!tableData.shipment_dates.length){
+    document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:40px;color:var(--muted)">暂无到货箱子记录</td></tr></tbody>';
+    return;
+  }
+  const {shipment_dates,global_max_seq,table,date_meta}=tableData;
+  let thead='<thead><tr><th class="seq-th">序</th>';
+  for(const sd of shipment_dates){
+    const m=date_meta[sd];
+    const typeSummary=Object.entries(m.types).map(([t,{count}])=>`${t}×${count}`).join(' ');
+    thead+=`<th>${m.display}<div class="th-types">${typeSummary}</div></th>`;
+  }
+  thead+='</tr></thead>';
+
+  let tbody='<tbody>';
+  for(let seq=1;seq<=global_max_seq;seq++){
+    // Check if any column has this seq
+    const hasAny=shipment_dates.some(sd=>table[sd]&&table[sd][seq]);
+    if(!hasAny) continue;
+    tbody+=`<tr><td class="seq-td">${seq}</td>`;
+    for(const sd of shipment_dates){
+      const cell=table[sd]?table[sd][seq]:null;
+      if(!cell){ tbody+='<td class="cell-empty"></td>'; continue; }
+      const isHl=selArrDate&&cell.arrived&&cell.arrival_date===selArrDate;
+      const isBsel=batchSel.has(cell.box_code);
+      let cls=cell.arrived?'cell-arrived':'cell-missing';
+      if(isHl) cls='cell-hl';
+      if(isBsel) cls='cell-batch-sel';
+      const seqPad=String(seq).padStart(3,'0');
+      tbody+=`<td class="${cls}" data-code="${cell.box_code}" data-arrived="${cell.arrived}"
+        data-adate="${cell.arrival_date||''}"
+        onclick="onCellClick('${cell.box_code}',${cell.arrived},'${cell.arrival_date||''}',event)">
+        <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${seqPad}</div></div>
+      </td>`;
+    }
+    tbody+='</tr>';
+  }
+  tbody+='</tbody>';
+  document.getElementById('box-table').innerHTML=thead+tbody;
+}
+
+function jumpBox(){
+  const code=document.getElementById('box-inp').value.trim();
+  if(!code){ toast('请输入箱码','err'); return; }
+  // Highlight and show side panel
+  const chip=document.querySelector(`[data-code="${code}"]`);
+  if(chip){ chip.scrollIntoView({behavior:'smooth',block:'center',inline:'center'}); }
+  showBoxSide(code);
+}
+
+// Cell click
+function onCellClick(code, arrived, adate, event){
+  if(batchMode){ toggleBatchCell(code); return; }
+  // Show popup near cell
+  const rect=event.target.getBoundingClientRect();
+  showCellPopup(code, arrived, adate, rect);
+}
+
+function showCellPopup(code, arrived, adate, rect){
+  cellPopupCode=code;
+  const popup=document.getElementById('cell-popup');
+  document.getElementById('cell-popup-title').innerHTML=`<span class="code">${code}</span> ${arrived?'修改到货日期':'设置到货日期（将标记为到货）'}`;
+  document.getElementById('cell-popup-date').value=adate||new Date().toLocaleDateString('sv-SE');
+  // Position popup
+  let top=rect.bottom+6, left=rect.left;
+  if(top+160>window.innerHeight) top=rect.top-160;
+  if(left+240>window.innerWidth) left=window.innerWidth-250;
+  popup.style.top=top+'px'; popup.style.left=left+'px';
+  popup.style.display='block';
+  setTimeout(()=>document.getElementById('cell-popup-date').focus(),50);
+  // Click outside closes
+  setTimeout(()=>document.addEventListener('click',closeCellOnOutside,{once:true}),50);
+}
+function closeCellOnOutside(e){
+  const popup=document.getElementById('cell-popup');
+  if(!popup.contains(e.target)) closeCellPopup();
+}
+function closeCellPopup(){ document.getElementById('cell-popup').style.display='none'; cellPopupCode=null; }
+async function saveCellDate(){
+  const date=document.getElementById('cell-popup-date').value;
+  const code=cellPopupCode;
+  if(!code||!date){ toast('请选择日期','err'); return; }
+  try{
+    const r=await api('/api/arrival/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({box_code:code,arrival_date:date,worker_name:'手动录入'})});
+    if(r.success){
+      toast(r.action==='created'?`✅ ${code} 已标记到货`:`✅ 日期已更新`,'ok');
+      closeCellPopup();
+      await loadBoxData();
+    } else toast('❌ 操作失败','err');
+  }catch{ toast('❌ 网络错误','err'); }
+}
+
+// Box side panel
+async function showBoxSide(code){
+  const side=document.getElementById('box-side');
+  side.style.display='block';
+  side.innerHTML=`
+    <div style="padding:12px 14px;background:var(--primary);color:#fff;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:13px;font-weight:800;font-family:monospace">${code}</div>
+      <button onclick="document.getElementById('box-side').style.display='none'"
+        style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:12px">✕</button>
+    </div>
+    <div style="padding:14px" id="bsp-body"><div class="loading">加载中…</div></div>
+  `;
+  try{
+    const d=await api(`/api/box/${encodeURIComponent(code)}`);
+    document.getElementById('bsp-body').innerHTML=`
+      ${d.arrival?`
+        <div style="background:#f0fdf4;border-radius:9px;padding:11px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#15803d;margin-bottom:5px;display:flex;justify-content:space-between">
+            <span>📦 到货信息</span>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-outline btn-sm" onclick="editArrival(${d.arrival.id},'${d.arrival.arrival_date||d.arrival.scanned_at.slice(0,10)}','${(d.arrival.notes||'').replace(/'/g,"\\'")}')">✏️</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteArrival(${d.arrival.id})">🗑️</button>
+            </div>
+          </div>
+          <div style="font-size:12px;line-height:1.85">
+            <div>到货日期：<b style="color:var(--success)">${d.arrival.arrival_date||d.arrival.scanned_at.slice(0,10)}</b></div>
+            <div>扫码时间：${d.arrival.scanned_at}</div>
+            <div>人员：${d.arrival.worker_name||'—'}</div>
+            ${d.arrival.unboxed_at?`<div>开箱时间：<span style="color:var(--primary);font-weight:600">${d.arrival.unboxed_at}</span></div>`:'<div style="color:var(--muted)">尚未开箱</div>'}
+            ${d.arrival.notes?`<div>备注：${d.arrival.notes}</div>`:''}
+          </div>
+        </div>`
+      :'<div style="background:#fff7ed;border-radius:9px;padding:11px;margin-bottom:12px;font-size:12px;color:var(--muted)">⚠️ 未找到到货记录</div>'}
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:7px">采购单（${d.po_records.length}条）</div>
+      ${d.po_records.map(p=>`
+        <div style="background:#f8fafc;border-radius:8px;padding:9px;margin-bottom:8px;border:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:5px">
+            <span class="code" style="font-size:13px">${p.po_code}</span>
+            <div style="display:flex;gap:3px">
+              <button class="btn btn-outline btn-sm" onclick="editPoRecord(${p.id},'${p.po_code}','${(p.notes||'').replace(/'/g,"\\'")}')">✏️</button>
+              <button class="btn btn-danger btn-sm" onclick="deletePoRecord(${p.id})">🗑️</button>
+            </div>
+          </div>
+          ${p.photo_path?`<img src="/uploads/${p.photo_path}" style="width:100%;height:75px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in" onclick="openLB('/uploads/${p.photo_path}')">`:''}
+          <div style="font-size:11px;color:var(--muted)">${p.created_at}</div>
+          ${p.error_count>0?`<span class="badge b-e" style="margin-top:3px">⚠️ ${p.error_count}错误</span>`:''}
+        </div>`).join('')||'<div style="color:var(--muted);font-size:12px">无开箱记录</div>'}
+      ${d.error_records?.length?`
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin:10px 0 7px">错误记录（${d.error_records.length}条）</div>
+        ${d.error_records.map(e=>`
+          <div style="background:#fff7ed;border-radius:8px;padding:9px;margin-bottom:7px;border:1px solid #fed7aa">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:4px">
+              <span class="code" style="font-size:13px">${e.po_code}</span>
+              <button class="btn btn-danger btn-sm" onclick="deleteError(${e.id})">🗑️</button>
+            </div>
+            ${e.photo_path?`<img src="/uploads/${e.photo_path}" style="width:100%;height:65px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in" onclick="openLB('/uploads/${e.photo_path}')">`:''}
+            <div style="font-size:11px;color:var(--muted)">${e.created_at}</div>
+            <div style="margin-top:3px">${statusBadge(e.review_status)}</div>
+          </div>`).join('')}
+      `:''}
+    `;
+  }catch{ document.getElementById('bsp-body').innerHTML='<div class="empty">加载失败</div>'; }
+}
+
+// Arrival edit/delete
+function editArrival(id,dateVal,notes){
+  showEdit('✏️ 编辑到货记录',
+    `<div class="mfg"><label>到货日期</label><input type="date" class="inp" id="ea-date" value="${dateVal}" style="width:100%"></div>
+     <div class="mfg"><label>备注</label><textarea class="inp" id="ea-notes" rows="2" style="width:100%;height:52px">${notes}</textarea></div>`,
+    `<button class="btn btn-primary" onclick="saveArrival(${id})">保存</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+}
+async function saveArrival(id){
+  const date=document.getElementById('ea-date').value;
+  const notes=document.getElementById('ea-notes').value.trim();
+  try{ await api(`/api/arrival/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({arrival_date:date,notes})}); closeEdit(); toast('✅ 已保存','ok'); await loadBoxData(); }
+  catch{ toast('失败','err'); }
+}
+function deleteArrival(id){
+  showConfirm('确认删除此到货记录？', async()=>{
+    try{ await api(`/api/arrival/${id}`,{method:'DELETE'}); toast('✅ 已删除','ok'); await loadBoxData(); document.getElementById('box-side').style.display='none'; }
+    catch{ toast('失败','err'); }
+  });
+}
+function editPoRecord(id,poCode,notes){
+  showEdit('✏️ 编辑采购单',
+    `<div class="mfg"><label>采购单码</label><input class="inp" id="epo-code" value="${poCode}" style="width:100%"></div>
+     <div class="mfg"><label>备注</label><textarea class="inp" id="epo-notes" rows="2" style="width:100%;height:52px">${notes}</textarea></div>`,
+    `<button class="btn btn-primary" onclick="savePoRecord(${id})">保存</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+}
+async function savePoRecord(id){
+  const poc=document.getElementById('epo-code').value.trim();
+  const pon=document.getElementById('epo-notes').value.trim();
+  if(!poc){ toast('采购单码不能为空','err'); return; }
+  try{ await api(`/api/po-record/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code:poc,notes:pon})}); closeEdit(); toast('✅ 已保存','ok'); const c=document.getElementById('box-inp').value.trim(); if(c) showBoxSide(c); }
+  catch{ toast('失败','err'); }
+}
+function deletePoRecord(id){
+  showConfirm('确认删除此采购单记录？', async()=>{
+    try{ await api(`/api/po-record/${id}`,{method:'DELETE'}); toast('✅ 已删除','ok'); const c=document.getElementById('box-inp').value.trim(); if(c) showBoxSide(c); }
+    catch{ toast('失败','err'); }
+  });
+}
+
+// ════════════════════════════
+// BATCH MODE
+// ════════════════════════════
+function toggleBatch(){
+  batchMode=!batchMode;
+  batchSel.clear();
+  const btn=document.getElementById('batch-toggle-btn');
+  btn.textContent=batchMode?'✕ 退出批量':'⚡ 批量修改';
+  btn.className=batchMode?'btn btn-danger':'btn btn-warn';
+  document.getElementById('box-side').style.display='none';
+  if(!batchMode) hideBatch();
+  renderTable();
+}
+function hideBatch(){ document.getElementById('batch-bar').classList.remove('on'); }
+function toggleBatchCell(code){
+  batchSel.has(code)?batchSel.delete(code):batchSel.add(code);
+  document.getElementById('batch-cnt').textContent=batchSel.size;
+  document.getElementById('batch-bar').classList.toggle('on',batchSel.size>0||batchMode);
+  if(batchMode) document.getElementById('batch-bar').classList.add('on');
+  // Update cell visual
+  const cell=document.querySelector(`[data-code="${code}"]`);
+  if(cell){ if(batchSel.has(code)){cell.className='cell-batch-sel';}else{const a=cell.dataset.arrived==='true'; cell.className=selArrDate&&cell.dataset.adate===selArrDate?'cell-hl':(a?'cell-arrived':'cell-missing');} }
+  document.getElementById('batch-cnt').textContent=batchSel.size;
+}
+function clearBatchSel(){
+  batchSel.clear();
+  document.getElementById('batch-cnt').textContent='0';
+  renderTable();
+}
+async function applyBatch(){
+  const date=document.getElementById('batch-date').value;
+  if(!batchSel.size){ toast('请先选择箱子','err'); return; }
+  if(!date){ toast('请选择到货日期','err'); return; }
+  try{
+    const r=await api('/api/arrivals/bulk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({box_codes:[...batchSel],arrival_date:date,worker_name:'批量修改'})});
+    toast(`✅ 已更新${r.updated}条，新增${r.created}条`,'ok');
+    clearBatchSel(); await loadBoxData();
+  }catch{ toast('操作失败','err'); }
+}
+
+// ════════════════════════════
+// ERROR REVIEW
+// ════════════════════════════
+function clearEF(){ ['ef-status','ef-from','ef-to','ef-po'].forEach(id=>document.getElementById(id).value=''); loadErrors(); }
+let eDbt;
+function debErr(){ clearTimeout(eDbt); eDbt=setTimeout(loadErrors,400); }
+
+async function loadErrors(){
+  const p=new URLSearchParams();
+  const st=document.getElementById('ef-status').value;
+  const fr=document.getElementById('ef-from').value;
+  const to=document.getElementById('ef-to').value;
+  const po=document.getElementById('ef-po').value.trim();
+  if(st) p.set('status',st); if(fr) p.set('date_from',fr); if(to) p.set('date_to',to); if(po) p.set('po_code',po);
+  const tbody=document.getElementById('err-tbody');
+  tbody.innerHTML='<tr><td colspan="7" class="loading">加载中…</td></tr>';
+  try{
+    const list=await api('/api/errors?'+p);
+    document.getElementById('err-cnt').textContent=`共${list.length}条`;
+    if(!list.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">无匹配记录</td></tr>'; return; }
+    tbody.innerHTML=list.map(e=>`
+      <tr class="erow ${selErrId==e.id?'sel':''}" onclick="selError(${e.id})">
+        <td><span class="code">${e.po_code}</span></td>
+        <td style="white-space:nowrap;color:var(--muted);font-size:12px">${e.created_at}</td>
+        <td>${e.worker_name||'—'}</td>
+        <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)" title="${e.error_description||''}">${e.error_description||'—'}</td>
+        <td>${statusBadge(e.review_status)}</td>
+        <td>${e.linked_po_record_id?'<span class="badge b-r">🔗</span>':'<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+        <td><div style="display:flex;gap:3px">
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();selError(${e.id})">详情</button>
+          ${e.review_status==='pending'?`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();quickRev(${e.id},'reviewed')">已审</button>`:''}
+          <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteError(${e.id})">🗑️</button>
+        </div></td>
+      </tr>`).join('');
+  }catch{ tbody.innerHTML='<tr><td colspan="7" class="empty">加载失败</td></tr>'; }
+}
+
+async function selError(id){
+  selErrId=id;
+  document.querySelectorAll('.erow').forEach(r=>r.classList.remove('sel'));
+  document.querySelectorAll('.erow').forEach(r=>{ if(r.getAttribute('onclick')?.includes(`(${id})`)) r.classList.add('sel'); });
+  document.getElementById('detail-view').classList.add('on');
+  ['dp-left','dp-mid','dp-right'].forEach(x=>document.getElementById(x).innerHTML='<div class="loading">加载中…</div>');
+  try{
+    const d=await api(`/api/errors/${id}`);
+    renderLeft(d); renderMid(d);
+    document.getElementById('dp-right').innerHTML='<div class="empty"><div class="empty-ic">👈</div>点击中间列表</div>';
+  }catch{ document.getElementById('dp-left').innerHTML='<div class="empty">加载失败</div>'; }
+}
+function closeDetail(){ document.getElementById('detail-view').classList.remove('on'); selErrId=null; document.querySelectorAll('.erow').forEach(r=>r.classList.remove('sel')); }
+
+function renderLeft(d){
+  const r=d.record;
+  let lk='';
+  if(r.linked_po_record_id) lk=`<div class="lk-banner"><div class="lk-banner-t">🔗 已关联开箱记录</div>
+    <div style="font-size:12px;line-height:1.7">
+      <div>箱码：<span class="code">${r.linked_box||'—'}</span></div>
+      <div>采购单：<span class="code">${r.linked_po_code||'—'}</span></div>
+      <div>开箱：${r.linked_unboxing_date||'—'}</div>
+      ${r.linked_photo_path?`<img src="/uploads/${r.linked_photo_path}" style="width:100%;height:55px;object-fit:cover;border-radius:6px;margin-top:4px;cursor:zoom-in" onclick="openLB('/uploads/${r.linked_photo_path}')">`:''}
+    </div>
+    <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:7px" onclick="unlinkPo(${r.id})">🔓 取消关联</button></div>`;
+  document.getElementById('dp-left').innerHTML=`
+    ${r.photo_path?`<img class="detail-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div style="height:50px;background:#f8fafc;border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;margin-bottom:10px">无照片</div>'}
+    <div class="ig">
+      <span class="lk">采购单码</span><span class="code" style="font-size:13px">${r.po_code}</span>
+      <span class="lk">提交时间</span><span>${r.created_at}</span>
+      <span class="lk">提交人</span><span>${r.worker_name||'—'}</span>
+      <span class="lk">描述</span><span style="line-height:1.5">${r.error_description||'—'}</span>
+      <span class="lk">状态</span><span>${statusBadge(r.review_status)}</span>
+    </div>${lk}
+    <div style="display:flex;gap:5px;margin-bottom:10px">
+      <button class="btn btn-outline btn-sm" onclick="editError(${r.id},'${r.po_code.replace(/'/g,"\\'")}','${(r.error_description||'').replace(/'/g,"\\'")}')">✏️ 编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteError(${r.id})">🗑️ 删除</button>
+    </div>
+    <div class="review-box">
+      <div class="rv-title">📝 审核操作</div>
+      <div style="margin-bottom:7px">
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">审核状态</label>
+        <select class="inp" id="rev-status" style="width:100%">
+          <option value="pending"  ${r.review_status==='pending'?'selected':''}>⏳ 待审核</option>
+          <option value="reviewed" ${r.review_status==='reviewed'?'selected':''}>👁 已审核</option>
+          <option value="resolved" ${r.review_status==='resolved'?'selected':''}>✅ 已解决</option>
+        </select>
+      </div>
+      <div style="margin-bottom:7px">
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">审核备注</label>
+        <textarea class="inp" id="rev-notes" rows="2" style="width:100%;height:52px">${r.review_notes||''}</textarea>
+      </div>
+      <button class="btn btn-success" style="width:100%;height:30px" onclick="saveReview(${r.id})">💾 保存审核</button>
+    </div>
+  `;
+}
+function renderMid(d){
+  document.getElementById('mid-title').textContent=`📋 采购单 ${d.record.po_code} 开箱记录`;
+  let html='';
+  if(d.po_records?.length){
+    html+=`<div style="padding:7px 12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#f8fafc;border-bottom:1px solid var(--border)">开箱记录（${d.po_records.length}条）—点击关联</div>`;
+    html+=d.po_records.map(p=>`
+      <div class="po-thumb" onclick="selMid(${p.id},${JSON.stringify({type:'po',po_code:p.po_code,box_code:p.box_code||'—',created_at:p.created_at,arrival_date:p.arrival_date||'—',photo_path:p.photo_path,error_count:p.error_count||0}).replace(/"/g,'&quot;')})">
+        <div class="ti">${p.photo_path?`<img src="/uploads/${p.photo_path}">`:'📄'}</div>
+        <div style="flex:1;min-width:0">
+          <div class="tc">${p.po_code}</div>
+          <div class="tm"><div>箱码：${p.box_code||'—'}</div><div>到货：${p.arrival_date||'—'}</div><div>开箱：${p.created_at}</div>${p.error_count>0?`<div><span class="badge b-e">⚠️${p.error_count}错误</span></div>`:''}</div>
+          <button class="btn btn-primary btn-sm" style="margin-top:4px;width:100%" onclick="event.stopPropagation();linkToPo(${d.record.id},${p.id})">${d.record.linked_po_record_id===p.id?'✅ 已关联':'🔗 关联'}</button>
+        </div>
+      </div>`).join('');
+  }
+  if(d.related_errors?.length){
+    html+=`<div style="padding:7px 12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#fff7ed;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">其他同名错误（${d.related_errors.length}条）</div>`;
+    html+=d.related_errors.map(e=>`
+      <div class="po-thumb" onclick="selMid(-${e.id},${JSON.stringify({type:'err',po_code:e.po_code,created_at:e.created_at,photo_path:e.photo_path,review_status:e.review_status,error_description:e.error_description||'—'}).replace(/"/g,'&quot;')})">
+        <div class="ti">${e.photo_path?`<img src="/uploads/${e.photo_path}">`:'⚠️'}</div>
+        <div><div class="tc">${e.po_code}</div><div class="tm"><div>${e.created_at}</div><div>${statusBadge(e.review_status)}</div></div></div>
+      </div>`).join('');
+  }
+  if(!html) html='<div class="empty"><div class="empty-ic">📭</div>无相关开箱记录</div>';
+  document.getElementById('dp-mid').innerHTML=html;
+}
+function selMid(id,metaStr){
+  document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
+  let meta; try{meta=typeof metaStr==='object'?metaStr:JSON.parse(metaStr.replace(/&quot;/g,'"'));}catch{meta={};}
+  const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div style="width:100%;height:160px;background:#f8fafc;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:32px">${meta.type==='err'?'⚠️':'📄'}</div>`;
+  document.getElementById('dp-right').innerHTML=`${imgHtml}
+    <div class="mg">
+      <span class="lk">采购单码</span><span class="code">${meta.po_code}</span>
+      ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
+      :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
+    </div>`;
+}
+async function linkToPo(errId,poId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:poId})}); toast('✅ 关联成功','ok'); loadErrors(); selError(errId); }catch{ toast('关联失败','err'); } }
+async function unlinkPo(errId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:null})}); toast('已取消关联','ok'); loadErrors(); selError(errId); }catch{ toast('失败','err'); } }
+async function quickRev(id,status){ try{ await api(`/api/errors/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({review_status:status,reviewed_by:'管理员'})}); toast('✅','ok'); loadErrors(); if(selErrId===id) selError(id); }catch{ toast('失败','err'); } }
+async function saveReview(id){ const status=document.getElementById('rev-status').value; const notes=document.getElementById('rev-notes').value.trim(); try{ await api(`/api/errors/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({review_status:status,review_notes:notes,reviewed_by:'管理员'})}); toast('✅ 已保存','ok'); loadErrors(); }catch{ toast('失败','err'); } }
+function editError(id,poc,desc){ showEdit('✏️ 编辑错误记录',`<div class="mfg"><label>采购单码</label><input class="inp" id="ee-poc" value="${poc}" style="width:100%"></div><div class="mfg"><label>描述</label><textarea class="inp" id="ee-desc" rows="2" style="width:100%;height:58px">${desc}</textarea></div>`,`<button class="btn btn-primary" onclick="saveEditErr(${id})">保存</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`); }
+async function saveEditErr(id){ const poc=document.getElementById('ee-poc').value.trim(); const desc=document.getElementById('ee-desc').value.trim(); if(!poc){toast('不能为空','err');return;} try{ await api(`/api/errors/${id}/edit`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code:poc,error_description:desc})}); closeEdit(); toast('✅','ok'); loadErrors(); if(selErrId===id) selError(id); }catch{ toast('失败','err'); } }
+function deleteError(id){ showConfirm('确认删除此错误记录？',async()=>{ try{ await api(`/api/errors/${id}`,{method:'DELETE'}); toast('✅','ok'); loadErrors(); closeDetail(); }catch{ toast('失败','err'); } }); }
+
+// ════════════════════════════
+// PO MANAGER
+// ════════════════════════════
+let poDbt;
+function debPo(){ clearTimeout(poDbt); poDbt=setTimeout(loadPoAll,350); }
+async function loadPoAll(){
+  const search=document.getElementById('po-inp').value.trim();
+  const sv=document.getElementById('po-sort').value;
+  const li=sv.lastIndexOf('_'); const sort=sv.slice(0,li); const dir=sv.slice(li+1);
+  const p=new URLSearchParams({sort,dir}); if(search) p.set('search',search);
+  const el=document.getElementById('po-result');
+  el.innerHTML='<div class="loading">加载中…</div>';
+  try{
+    const rows=await api('/api/po/all?'+p);
+    document.getElementById('po-count').textContent=`共${rows.length}条`;
+    if(!rows.length){el.innerHTML='<div class="empty"><div class="empty-ic">📭</div>暂无采购单记录</div>';return;}
+    el.innerHTML=`<div class="card"><div class="card-body"><div class="gallery">${rows.map(poCard).join('')}</div></div></div>`;
+  }catch{el.innerHTML='<div class="empty">加载失败</div>';}
+}
+function poCard(p){
+  const noBox=!p.box_code;
+  return `<div class="gitem">
+    ${p.photo_path?`<img src="/uploads/${p.photo_path}" onclick="openLB('/uploads/${p.photo_path}')">`:'<div class="gitem-ni">📄</div>'}
+    <div class="gitem-meta">
+      <div class="gitem-code">${p.po_code}</div>
+      ${noBox?`<div><span class="badge b-w">⚠️ 手动补录</span></div>`:`<div>箱：<span style="font-family:monospace;font-size:11px">${p.box_code}</span></div>`}
+      <div>📦 到货：${p.arrival_date||'—'}</div>
+      <div>📂 开箱：${p.created_at}</div>
+      ${p.notes?`<div style="color:var(--muted)">${p.notes}</div>`:''}
+      ${p.error_count>0?`<div><span class="badge b-e">⚠️${p.error_count}错误</span></div>`:''}
+      <div style="display:flex;gap:3px;margin-top:5px">
+        <button class="btn btn-outline btn-sm" onclick="editPoRecord(${p.id},'${p.po_code.replace(/'/g,"\\'")}','${(p.notes||'').replace(/'/g,"\\'")}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="deletePoRecord(${p.id})">🗑️</button>
+      </div>
+    </div>
+  </div>`;
+}
+function showMpoModal(){ mpoPhotoFile=null; ['mpo-code','mpo-box','mpo-notes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('mpo-ph-prev').style.display='none'; document.getElementById('mpo-ph-ph').style.display='flex'; document.getElementById('mpo-modal').classList.add('show'); setTimeout(()=>document.getElementById('mpo-code').focus(),100); }
+function onMpoPhoto(inp){ if(!inp.files[0])return; mpoPhotoFile=inp.files[0]; const fr=new FileReader(); fr.onload=e=>{document.getElementById('mpo-ph-prev').src=e.target.result;document.getElementById('mpo-ph-prev').style.display='block';document.getElementById('mpo-ph-ph').style.display='none';}; fr.readAsDataURL(inp.files[0]); }
+async function submitMpo(){ const code=document.getElementById('mpo-code').value.trim(); const box=document.getElementById('mpo-box').value.trim(); const notes=document.getElementById('mpo-notes').value.trim(); if(!code){toast('请输入采购单号','err');return;} if(!mpoPhotoFile){toast('请选择照片','err');return;} const fd=new FormData(); fd.append('po_code',code); fd.append('notes',notes); if(box) fd.append('box_code',box); fd.append('photo',mpoPhotoFile); try{ const r=await fetch('/api/po-record/manual',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){toast(`✅ ${code} 已补录`,'ok');document.getElementById('mpo-modal').classList.remove('show');loadPoAll();}else toast('❌ '+(r.error||'失败'),'err'); }catch{toast('❌ 网络错误','err');} }
+
+// ════════════════════════════
+// IMPORT
+// ════════════════════════════
+function handleDrop(e){ e.preventDefault(); document.getElementById('drop-zone').classList.remove('drag-over'); const f=e.dataTransfer.files[0]; if(f) uploadPreview(f); }
+function handleFileSelect(inp){ if(inp.files[0]) uploadPreview(inp.files[0]); }
+async function uploadPreview(file){ const dz=document.getElementById('drop-zone'); dz.innerHTML='<div style="font-size:36px;margin-bottom:8px">⏳</div><div style="color:var(--muted)">解析中…</div>'; const fd=new FormData(); fd.append('file',file); try{ const r=await fetch('/api/import/preview',{method:'POST',body:fd}).then(r=>r.json()); if(!r.success){resetImport();toast('❌ '+r.error,'err');return;} importRows=r.rows; renderPreview(); }catch{resetImport();toast('❌ 解析失败','err');} }
+function renderPreview(){ document.getElementById('imp-s1').style.display='none'; document.getElementById('imp-s2').style.display='block'; const total=importRows.length,dups=importRows.filter(r=>r.exists).length; document.getElementById('imp-s2-title').textContent=`预览 — 共${total}条，${total-dups}条新，${dups}条已存在`; document.getElementById('imp-tbody').innerHTML=importRows.map((r,i)=>`<tr style="${r.exists?'background:#fffbeb':''}"><td><input type="checkbox" class="imp-chk" data-idx="${i}" ${r.exists?'':'checked'} style="accent-color:var(--primary)"></td><td style="color:var(--muted);font-size:12px">${r.row}</td><td><span class="code">${r.box_code}</span></td><td>${r.arrival_date}</td><td>${r.worker_name}</td><td style="color:var(--muted);font-size:12px">${r.notes||'—'}</td><td>${r.exists?`<span class="badge b-w">⚠️已存在</span>`:'<span class="badge b-n">✅新记录</span>'}</td></tr>`).join(''); updateImpSum(); document.querySelectorAll('.imp-chk').forEach(c=>c.addEventListener('change',updateImpSum)); }
+function toggleAllImp(m){ document.querySelectorAll('.imp-chk').forEach(c=>c.checked=m.checked); updateImpSum(); }
+function updateImpSum(){ const c=document.querySelectorAll('.imp-chk:checked').length,t=document.querySelectorAll('.imp-chk').length; document.getElementById('imp-summary').textContent=`已选${c}/${t}条`; document.getElementById('imp-confirm-btn').disabled=c===0; }
+async function confirmImport(){ const skip=document.getElementById('skip-dup').checked; const sel=[...document.querySelectorAll('.imp-chk:checked')].map(c=>importRows[parseInt(c.dataset.idx)]); if(!sel.length){toast('请选择记录','err');return;} const btn=document.getElementById('imp-confirm-btn'); btn.disabled=true; btn.textContent='导入中…'; try{ const r=await api('/api/import/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:sel,skip_duplicates:skip,operator:'管理员'})}); document.getElementById('imp-s2').style.display='none'; document.getElementById('imp-s3').style.display='block'; document.getElementById('imp-result').innerHTML=`<div class="stats-row"><div class="stat-card"><div class="sv" style="color:var(--success)">${r.imported}</div><div class="sl">成功</div></div><div class="stat-card"><div class="sv" style="color:var(--warning)">${r.skipped}</div><div class="sl">跳过</div></div><div class="stat-card ${r.errors?.length?'alert-card':''}"><div class="sv">${r.errors?.length||0}</div><div class="sl">失败</div></div></div>${r.errors?.length?`<div style="background:#fff5f5;border-radius:8px;padding:10px;font-size:12px">${r.errors.map(e=>`<div><span class="code">${e.box_code}</span> — ${e.error}</div>`).join('')}</div>`:''}`; loadImpLogs(); toast(`✅ 导入完成，成功${r.imported}条`,'ok'); }catch{toast('❌ 失败','err');btn.disabled=false;btn.textContent='✅ 确认导入';} }
+function resetImport(){ importRows=[]; document.getElementById('imp-s1').style.display='block'; document.getElementById('imp-s2').style.display='none'; document.getElementById('imp-s3').style.display='none'; document.getElementById('imp-inp').value=''; document.getElementById('drop-zone').innerHTML='<div style="font-size:36px;margin-bottom:8px">📂</div><div style="font-size:14px;font-weight:600;margin-bottom:4px">点击选择或拖拽文件</div><div style="font-size:12px;color:var(--muted)">.xlsx / .xls / .csv，最大10MB</div>'; }
+async function loadImpLogs(){ const el=document.getElementById('imp-log-body'); try{ const logs=await api('/api/import/logs'); if(!logs.length){el.innerHTML='<div style="padding:14px;font-size:13px;color:var(--muted)">暂无导入记录</div>';return;} el.innerHTML=logs.map(l=>`<div class="ilog-row"><div style="flex:1"><div style="font-size:13px;font-weight:600">${l.created_at}</div><div style="font-size:12px;color:var(--muted)">导入${l.count}箱 · ${l.operator} ${l.skip_dup?'（跳过重复）':'（含覆盖）'}</div></div><button class="btn btn-warn btn-sm" onclick="undoImport(${l.id},${l.count})">↩ 撤回</button></div>`).join(''); }catch{el.innerHTML='<div style="padding:14px;font-size:13px;color:var(--muted)">加载失败</div>';} }
+function undoImport(id,count){ showConfirm(`确认撤回此次导入？将删除${count}条到货记录。`,async()=>{ try{ const r=await api(`/api/import/logs/${id}`,{method:'DELETE'}); toast(`✅ 已撤回，删除${r.deleted}条`,'ok'); loadImpLogs(); loadBoxData(); }catch{toast('失败','err');} }); }
+
+// ════════════════════════════
+// DB IMPORT
+// ════════════════════════════
+async function doDbImport(inp){ if(!inp.files[0])return; const fd=new FormData(); fd.append('file',inp.files[0]); const el=document.getElementById('db-imp-result'); el.innerHTML='<span style="color:var(--muted)">导入中…</span>'; try{ const r=await fetch('/api/db/import',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){ el.innerHTML='<div style="color:var(--success);font-weight:600">✅ 导入完成</div>'+Object.entries(r.results).map(([k,v])=>`<div style="font-size:12px;color:var(--muted)">${k}：更新${v.updated||0}条${v.inserted?'，新增'+v.inserted+'条':''}</div>`).join(''); loadBoxData(); }else{ el.innerHTML=`<div style="color:var(--danger)">❌ ${r.error||'失败'}</div>`; } }catch{ el.innerHTML='<div style="color:var(--danger)">❌ 网络错误</div>'; } inp.value=''; }
+
+// ════════════════════════════
+// INIT
+// ════════════════════════════
+loadStats();
+loadBoxData();
+goTab('box');
+setInterval(loadStats, 60000);
+</script>
+</body>
+</html>
