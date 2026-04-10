@@ -175,8 +175,8 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 }
 #box-table tbody td.cell-arrived{background:#fef9c3;color:#854d0e}
 #box-table tbody td.cell-arrived:hover{background:#fde68a}
-#box-table tbody td.cell-missing{background:#fff;color:#dc2626;border-style:dashed}
-#box-table tbody td.cell-missing:hover{background:#fff5f5}
+#box-table tbody td.cell-missing{background:#fff;color:#475569;border-style:solid}
+#box-table tbody td.cell-missing:hover{background:#f8fafc}
 #box-table tbody td.cell-empty{background:#f8fafc;cursor:default}
 #box-table tbody td.cell-hl{background:#fde68a!important;color:#78350f}
 #box-table tbody td.cell-batch-sel{
@@ -200,6 +200,32 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   background:#1e293b;color:#fff;padding:10px 20px;z-index:81;
   align-items:center;gap:10px;flex-wrap:wrap}
 #batch-bar.on{display:flex}
+
+
+/* Shipment module */
+.ship-form-grid{display:grid;grid-template-columns:160px 120px 1fr auto;gap:10px;align-items:end}
+.ship-items{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.ship-item-row{display:grid;grid-template-columns:1fr 120px auto;gap:8px;align-items:center}
+.ship-history-row{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px}
+.ship-history-row:last-child{border-bottom:none}
+.ship-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px;font-weight:700;margin-right:6px;margin-top:4px}
+.ship-box-preview{max-height:180px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:12px;line-height:1.7}
+/* PO 3-pane */
+.po3{display:grid;grid-template-columns:1.15fr 1fr 1.2fr;gap:12px;min-height:560px}
+.po-pane{background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-height:560px}
+.po-pane-hd{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:800;background:#f8fafc}
+.po-pane-bd{padding:10px;overflow:auto;flex:1}
+.po-date-table{width:100%;border-collapse:collapse}
+.po-date-table th,.po-date-table td{border-bottom:1px solid var(--border);padding:10px 8px;vertical-align:top;font-size:12px}
+.po-date-table th{background:#f8fafc;text-align:left;position:sticky;top:0}
+.po-code-btn{display:inline-block;border:1px solid var(--border);background:#fff;padding:4px 8px;border-radius:999px;margin:0 6px 6px 0;cursor:pointer;font-size:12px}
+.po-code-btn.err{background:#fef2f2;border-color:#fecaca;color:#b91c1c;font-weight:700}
+.po-code-btn.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;font-weight:700}
+.po-file-item{padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;background:#fff}
+.po-file-item.on{border-color:#93c5fd;background:#eff6ff}
+.po-file-item.err{border-color:#fecaca;background:#fef2f2}
+.po-preview-img{width:100%;max-height:420px;object-fit:contain;border:1px solid var(--border);border-radius:10px;background:#f8fafc;display:block;cursor:zoom-in}
+@media (max-width:1100px){.po3{grid-template-columns:1fr}.po-pane{min-height:unset}}
 
 /* PO gallery */
 .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
@@ -256,6 +282,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 <nav class="tabnav">
   <button class="tnb on" id="tn-box"    onclick="goTab('box')">📦 箱子管理器</button>
   <button class="tnb"    id="tn-errors" onclick="goTab('errors')">⚠️ 错误订单核对</button>
+  <button class="tnb"    id="tn-shipments" onclick="goTab('shipments')">🚚 发货记录</button>
   <button class="tnb"    id="tn-po"     onclick="goTab('po')">📋 采购单管理器</button>
   <button class="tnb"    id="tn-import" onclick="goTab('import')">📥 批量导入</button>
   <button class="tnb"    id="tn-db"     onclick="goTab('db')">🗄️ 数据库管理</button>
@@ -283,6 +310,11 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   <input class="inp" id="ef-po" placeholder="采购单码" style="width:130px" oninput="debErr()">
   <button class="btn btn-ghost" onclick="clearEF()">清除</button>
   <span id="err-cnt" style="font-size:12px;color:var(--muted)"></span>
+</div>
+<div class="fbar" id="fb-shipments">
+  <span style="font-size:12px;color:var(--muted)">录入厂家发货记录并生成连续箱号</span>
+  <div style="flex:1"></div>
+  <button class="btn btn-ghost" onclick="loadShipmentModule()">🔄 刷新</button>
 </div>
 <div class="fbar" id="fb-po">
   <input class="inp" id="po-inp" placeholder="按采购单码筛选…" style="width:200px" oninput="debPo()">
@@ -332,6 +364,36 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
       <div class="dp" style="flex:1">
         <div class="dp-hd">🔍 预览</div>
         <div class="dp-body" id="dp-right"><div class="empty"><div class="empty-ic">👈</div>点击中间列表</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SHIPMENT MANAGER ══ -->
+  <div class="tpage pad" id="page-shipments">
+    <div style="max-width:1180px;margin:0 auto;display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start">
+      <div class="card">
+        <div class="card-hd"><div class="card-title">🚚 新建发货提交</div></div>
+        <div class="card-body">
+          <div class="ship-form-grid">
+            <div><div class="flbl">发货日期</div><input type="date" class="inp" id="ship-date" style="width:100%"></div>
+            <div><div class="flbl">总箱数</div><input type="number" class="inp" id="ship-total" min="1" style="width:100%"></div>
+            <div></div>
+            <div><button class="btn btn-outline" onclick="addShipItemRow()">＋ 代号</button></div>
+          </div>
+          <div class="ship-items" id="ship-items"></div>
+          <div style="margin-top:12px">
+            <div class="flbl" style="margin-bottom:6px">生成预览</div>
+            <div class="ship-box-preview" id="ship-preview">请先填写发货日期、总箱数和代号箱数。</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" onclick="submitShipmentBatch()">✅ 提交发货记录</button>
+            <button class="btn btn-ghost" onclick="resetShipmentForm()">重置</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-title">🕘 提交历史 / 撤回</div></div>
+        <div id="ship-history"><div class="loading">加载中…</div></div>
       </div>
     </div>
   </div>
@@ -435,6 +497,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 <!-- Bottom bars -->
 <div id="stats-bar">
   <span id="stats-bar-content">...</span>
+  <span id="stats-bar-actions" style="margin-left:auto;display:flex;gap:8px"></span>
 </div>
 <div id="batch-bar">
   <span style="font-size:13px;white-space:nowrap">已选 <b id="batch-cnt">0</b> 个</span>
@@ -511,16 +574,18 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 // ════════════════════════════
 let selErrId=null, batchMode=false, batchSel=new Set();
 let importRows=[], mpoPhotoFile=null;
-let tableData=null, arrivalDates=[], selArrDate=null;
+let tableData=null, arrivalDates=[], selArrDate=null, selShipmentDate=null;
+let shipmentOverview=[], poOverview=[];
+let currentPoGroup=null, currentPoRecord=null;
 let cellPopupCode=null;
 
 // ════════════════════════════
 // LAYOUT
 // ════════════════════════════
-const FBAR = { box:'fb-box', errors:'fb-errors', po:'fb-po' };
+const FBAR = { box:'fb-box', errors:'fb-errors', shipments:'fb-shipments', po:'fb-po' };
 
 function goTab(t) {
-  ['box','errors','po','import','db'].forEach(x=>{
+  ['box','errors','shipments','po','import','db'].forEach(x=>{
     document.getElementById(`page-${x}`).classList.toggle('on',x===t);
     document.getElementById(`tn-${x}`).classList.toggle('on',x===t);
   });
@@ -532,6 +597,7 @@ function goTab(t) {
   document.getElementById('ca').scrollTop=0;
   if(t==='box')    loadBoxData();
   if(t==='errors') loadErrors();
+  if(t==='shipments') loadShipmentModule();
   if(t==='po')     loadPoAll();
   if(t==='import') loadImpLogs();
   if(t!=='box'){ hideBatch(); hideStats(); }
@@ -610,17 +676,38 @@ function filterByDate(date){
   renderTable();
   updateStatsBar();
 }
+function selectShipmentDate(date){
+  selShipmentDate = selShipmentDate===date ? null : date;
+  renderTable();
+  updateStatsBar();
+}
+async function fillRemainingShipment(date){
+  const val=prompt('把该发货日期剩余未到货箱子，统一设置为到货日期（格式 YYYY-MM-DD）：', new Date().toLocaleDateString('sv-SE'));
+  if(!val) return;
+  try{
+    const r=await api('/api/shipments/fill-remaining',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shipment_date:date,arrival_date:val,worker_name:'管理员整批补到'})});
+    toast(`✅ 已补记 ${r.created} 箱到货`,'ok');
+    await loadBoxData();
+  }catch(e){ toast('操作失败','err'); }
+}
 
-function hideStats(){ document.getElementById('stats-bar').classList.remove('on'); }
+function hideStats(){ document.getElementById('stats-bar').classList.remove('on'); document.getElementById('stats-bar-actions').innerHTML=''; }
 function updateStatsBar(){
   const bar=document.getElementById('stats-bar');
-  if(!selArrDate){ bar.classList.remove('on'); return; }
+  const actions=document.getElementById('stats-bar-actions');
+  if(selShipmentDate && tableData?.date_meta?.[selShipmentDate]){
+    const meta=tableData.date_meta[selShipmentDate];
+    bar.classList.add('on');
+    document.getElementById('stats-bar-content').innerHTML=`<b>🚚 ${meta.display_short} 发货：</b> 共 ${meta.shipped_count||0} 箱，已到 ${meta.arrived_count||0} 箱，剩余未到 <b>${meta.remaining_count||0}</b> 箱`;
+    actions.innerHTML = meta.remaining_count>0 ? `<button class="btn btn-success btn-sm" onclick="fillRemainingShipment('${selShipmentDate}')">将剩余未到货标记为某日全到</button>` : '<span style="font-size:12px;opacity:.9">该批次已全部到货</span>';
+    return;
+  }
+  if(!selArrDate){ bar.classList.remove('on'); actions.innerHTML=''; return; }
   const info=arrivalDates.find(d=>d.arrival_date===selArrDate);
-  if(!info){ bar.classList.remove('on'); return; }
+  if(!info){ bar.classList.remove('on'); actions.innerHTML=''; return; }
   bar.classList.add('on');
-  document.getElementById('stats-bar-content').innerHTML=
-    `<b>📅 ${info.arrival_date} 到货：共 ${info.count} 箱</b>　` +
-    info.shipments.map(s=>`${s.display} <b>${s.count}</b>箱`).join('　·　');
+  actions.innerHTML='';
+  document.getElementById('stats-bar-content').innerHTML=`<b>📅 ${info.arrival_date} 到货：共 ${info.count} 箱</b>　` + info.shipments.map(s=>`${s.display} <b>${s.count}</b>箱`).join('　·　');
 }
 
 function renderTable(){
@@ -633,7 +720,8 @@ function renderTable(){
   for(const sd of shipment_dates){
     const m=date_meta[sd];
     const typeSummary=Object.entries(m.types).map(([t,{count}])=>`${t}×${count}`).join(' ');
-    thead+=`<th>${m.display}<div class="th-types">${typeSummary}</div></th>`;
+    const active=selShipmentDate===sd?' style="box-shadow:inset 0 -3px 0 #fde68a"':'';
+    thead+=`<th onclick="selectShipmentDate('${sd}')" ${active}>${m.display}<div class="th-types">${typeSummary}</div><div class="th-types">已到 ${m.arrived_count||0} / 发 ${m.shipped_count||0}</div></th>`;
   }
   thead+='</tr></thead>';
 
@@ -646,14 +734,17 @@ function renderTable(){
     for(const sd of shipment_dates){
       const cell=table[sd]?table[sd][seq]:null;
       if(!cell){ tbody+='<td class="cell-empty"></td>'; continue; }
-      const isHl=selArrDate&&cell.arrived&&cell.arrival_date===selArrDate;
+      const isHl=(selArrDate&&cell.arrived&&cell.arrival_date===selArrDate)||(selShipmentDate&&selShipmentDate===sd&&(cell.shipped||cell.arrived));
       const isBsel=batchSel.has(cell.box_code);
-      let cls=cell.arrived?'cell-arrived':'cell-missing';
+      let cls='cell-empty';
+      if(cell.shipped&&cell.arrived) cls='cell-arrived';
+      else if(cell.shipped&&!cell.arrived) cls='cell-missing';
+      else if(!cell.shipped&&cell.arrived) cls='cell-arrived';
       if(isHl) cls='cell-hl';
       if(isBsel) cls='cell-batch-sel';
       const seqPad=String(seq).padStart(3,'0');
       tbody+=`<td class="${cls}" data-code="${cell.box_code}" data-arrived="${cell.arrived}"
-        data-adate="${cell.arrival_date||''}"
+        data-adate="${cell.arrival_date||''}" data-shipped="${cell.shipped}"
         onclick="onCellClick('${cell.box_code}',${cell.arrived},'${cell.arrival_date||''}',event)">
         <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${seqPad}</div></div>
       </td>`;
@@ -997,41 +1088,124 @@ async function saveEditErr(id){ const poc=document.getElementById('ee-poc').valu
 function deleteError(id){ showConfirm('确认删除此错误记录？',async()=>{ try{ await api(`/api/errors/${id}`,{method:'DELETE'}); toast('✅','ok'); loadErrors(); closeDetail(); }catch{ toast('失败','err'); } }); }
 
 // ════════════════════════════
+// SHIPMENT MODULE
+// ════════════════════════════
+function addShipItemRow(code='',count=''){
+  const wrap=document.getElementById('ship-items');
+  const row=document.createElement('div');
+  row.className='ship-item-row';
+  row.innerHTML=`<input class="inp ship-code" placeholder="代号，如 DSH" value="${code}" oninput="renderShipmentPreview()">
+    <input type="number" min="1" class="inp ship-count" placeholder="箱数" value="${count}" oninput="renderShipmentPreview()">
+    <button class="btn btn-danger btn-sm" onclick="this.parentElement.remove();renderShipmentPreview()">删除</button>`;
+  wrap.appendChild(row);
+}
+function getShipmentFormData(){
+  const shipment_date=document.getElementById('ship-date').value;
+  const total_count=parseInt(document.getElementById('ship-total').value||'0',10);
+  const items=[...document.querySelectorAll('#ship-items .ship-item-row')].map(r=>({type_code:r.querySelector('.ship-code').value.trim().toUpperCase(),count:parseInt(r.querySelector('.ship-count').value||'0',10)})).filter(x=>x.type_code||x.count);
+  return { shipment_date, total_count, items };
+}
+function buildShipmentPreviewData(){
+  const {shipment_date,total_count,items}=getShipmentFormData();
+  if(!shipment_date||!items.length) return {ok:false,msg:'请先填写发货日期、总箱数和代号箱数。'};
+  const date8=shipment_date.replace(/-/g,'');
+  let seq=1, boxes=[];
+  for(const it of items){
+    if(!it.type_code||!it.count) continue;
+    for(let i=0;i<it.count;i++) boxes.push(`${date8}${it.type_code}${String(seq++).padStart(3,'0')}`);
+  }
+  return {ok:true,total_count,items,boxes,sum:boxes.length};
+}
+function renderShipmentPreview(){
+  const box=document.getElementById('ship-preview');
+  const d=buildShipmentPreviewData();
+  if(!d.ok){ box.textContent=d.msg; return; }
+  const warn=d.total_count&&d.total_count!==d.sum?`
+⚠️ 总箱数 ${d.total_count} 与明细合计 ${d.sum} 不一致`:' ';
+  box.innerHTML=`<div style="margin-bottom:8px">合计生成 <b>${d.sum}</b> 个箱号${warn?`<span style="color:#dc2626">${warn}</span>`:''}</div><div>${d.boxes.join('<br>')}</div>`;
+}
+function resetShipmentForm(){
+  document.getElementById('ship-date').value='';
+  document.getElementById('ship-total').value='';
+  document.getElementById('ship-items').innerHTML='';
+  addShipItemRow();
+  addShipItemRow();
+  renderShipmentPreview();
+}
+async function loadShipmentModule(){
+  if(!document.getElementById('ship-items').children.length) resetShipmentForm();
+  try{
+    shipmentOverview=await api('/api/shipments/overview');
+    const logs=await api('/api/shipments/batches');
+    const el=document.getElementById('ship-history');
+    if(!logs.length){ el.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">暂无发货提交记录</div>'; return; }
+    el.innerHTML=logs.map(l=>`<div class="ship-history-row"><div style="flex:1"><div style="font-weight:700">${l.shipment_date.slice(0,4)}-${l.shipment_date.slice(4,6)}-${l.shipment_date.slice(6,8)} · ${l.generated_count}箱 ${l.revoked_at?'<span class="badge b-r">已撤回</span>':''}</div><div style="font-size:12px;color:var(--muted)">提交：${l.created_at}｜已到 ${l.arrived_count} ｜未到 ${l.remaining_count}</div></div>${l.revoked_at?'':`<button class="btn btn-warn btn-sm" onclick="revokeShipmentBatch(${l.id})">↩ 撤回</button>`}</div>`).join('');
+  }catch{ document.getElementById('ship-history').innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">加载失败</div>'; }
+}
+async function submitShipmentBatch(){
+  const data=getShipmentFormData();
+  if(!data.shipment_date){ toast('请选择发货日期','err'); return; }
+  if(!data.total_count){ toast('请输入总箱数','err'); return; }
+  if(!data.items.length){ toast('请填写至少一个代号','err'); return; }
+  try{
+    const r=await api('/api/shipments/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,operator:'管理员'})});
+    if(r.success){ toast(`✅ 已生成 ${r.total_count} 条发货记录`,'ok'); resetShipmentForm(); await loadShipmentModule(); await loadBoxData(); }
+    else toast(r.error||'失败','err');
+  }catch{ toast('提交失败','err'); }
+}
+function revokeShipmentBatch(id){ showConfirm('确认撤回这次发货提交？撤回后发货记录不再参与在途匹配。', async()=>{ try{ const r=await api(`/api/shipments/batches/${id}`,{method:'DELETE'}); if(r.success){ toast('✅ 已撤回','ok'); await loadShipmentModule(); await loadBoxData(); } }catch{ toast('撤回失败','err'); } }); }
+
+// ════════════════════════════
 // PO MANAGER
 // ════════════════════════════
 let poDbt;
 function debPo(){ clearTimeout(poDbt); poDbt=setTimeout(loadPoAll,350); }
 async function loadPoAll(){
   const search=document.getElementById('po-inp').value.trim();
-  const sv=document.getElementById('po-sort').value;
-  const li=sv.lastIndexOf('_'); const sort=sv.slice(0,li); const dir=sv.slice(li+1);
-  const p=new URLSearchParams({sort,dir}); if(search) p.set('search',search);
   const el=document.getElementById('po-result');
   el.innerHTML='<div class="loading">加载中…</div>';
   try{
-    const rows=await api('/api/po/all?'+p);
-    document.getElementById('po-count').textContent=`共${rows.length}条`;
-    if(!rows.length){el.innerHTML='<div class="empty"><div class="empty-ic">📭</div>暂无采购单记录</div>';return;}
-    el.innerHTML=`<div class="card"><div class="card-body"><div class="gallery">${rows.map(poCard).join('')}</div></div></div>`;
+    poOverview=await api('/api/po/overview'+(search?`?search=${encodeURIComponent(search)}`:''));
+    const count=poOverview.reduce((s,g)=>s+g.pos.length,0);
+    document.getElementById('po-count').textContent=`共${count}个采购单号`;
+    el.innerHTML=`<div class="po3">
+      <div class="po-pane"><div class="po-pane-hd">到货日期 → 当天采购单号</div><div class="po-pane-bd" id="po-left"></div></div>
+      <div class="po-pane"><div class="po-pane-hd">图片列表</div><div class="po-pane-bd" id="po-mid"><div class="empty"><div class="empty-ic">👈</div>点击左侧采购单号</div></div></div>
+      <div class="po-pane"><div class="po-pane-hd">图片预览</div><div class="po-pane-bd" id="po-right"><div class="empty"><div class="empty-ic">🖼️</div>点击中间图片名</div></div></div>
+    </div>`;
+    renderPoLeft();
   }catch{el.innerHTML='<div class="empty">加载失败</div>';}
 }
-function poCard(p){
-  const noBox=!p.box_code;
-  return `<div class="gitem">
-    ${p.photo_path?`<img src="/uploads/${p.photo_path}" onclick="openLB('/uploads/${p.photo_path}')">`:'<div class="gitem-ni">📄</div>'}
-    <div class="gitem-meta">
-      <div class="gitem-code">${p.po_code}</div>
-      ${noBox?`<div><span class="badge b-w">⚠️ 手动补录</span></div>`:`<div>箱：<span style="font-family:monospace;font-size:11px">${p.box_code}</span></div>`}
-      <div>📦 到货：${p.arrival_date||'—'}</div>
-      <div>📂 开箱：${p.created_at}</div>
-      ${p.notes?`<div style="color:var(--muted)">${p.notes}</div>`:''}
-      ${p.error_count>0?`<div><span class="badge b-e">⚠️${p.error_count}错误</span></div>`:''}
-      <div style="display:flex;gap:3px;margin-top:5px">
-        <button class="btn btn-outline btn-sm" onclick="editPoRecord(${p.id},'${p.po_code.replace(/'/g,"\\'")}','${(p.notes||'').replace(/'/g,"\\'")}')">✏️</button>
-        <button class="btn btn-danger btn-sm" onclick="deletePoRecord(${p.id})">🗑️</button>
-      </div>
-    </div>
-  </div>`;
+function renderPoLeft(){
+  const el=document.getElementById('po-left');
+  if(!poOverview.length){ el.innerHTML='<div class="empty"><div class="empty-ic">📭</div>暂无采购单记录</div>'; return; }
+  el.innerHTML=`<table class="po-date-table"><thead><tr><th style="width:130px">到货日期</th><th>采购单号</th></tr></thead><tbody>${poOverview.map(g=>`<tr><td><b>${g.arrival_date||'未关联到货'}</b></td><td>${g.pos.map(po=>`<button class="po-code-btn ${po.has_error?'err':''} ${currentPoGroup?.arrival_date===g.arrival_date&&currentPoGroup?.po_code===po.po_code?'on':''}" onclick="selectPoGroup('${(g.arrival_date||'').replace(/'/g,"\'")}','${po.po_code.replace(/'/g,"\'")}')">${po.po_code}${po.has_error?` ⚠️${po.error_count}`:''}</button>`).join('')}</td></tr>`).join('')}</tbody></table>`;
+}
+function selectPoGroup(arrivalDate, poCode){
+  const group=poOverview.find(g=>String(g.arrival_date)===String(arrivalDate));
+  const po=group?.pos.find(p=>p.po_code===poCode);
+  if(!po) return;
+  currentPoGroup={arrival_date:arrivalDate,po_code:poCode,records:po.records};
+  currentPoRecord=null;
+  renderPoLeft();
+  const mid=document.getElementById('po-mid');
+  mid.innerHTML=po.records.map((r,idx)=>`<div class="po-file-item ${r.error_count>0?'err':''}" onclick="selectPoRecord(${idx})"><div style="font-weight:700">${r.photo_path ? r.photo_path.split('/').pop() : '无图片'}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">箱码：${r.box_code||'—'}<br>录入：${r.created_at}${r.error_count>0?`<br><span style='color:#b91c1c;font-weight:700'>存在关联错误订单</span>`:''}</div></div>`).join('') || '<div class="empty">暂无图片记录</div>';
+  document.getElementById('po-right').innerHTML='<div class="empty"><div class="empty-ic">🖼️</div>点击中间图片名</div>';
+}
+function selectPoRecord(idx){
+  if(!currentPoGroup?.records?.[idx]) return;
+  currentPoRecord=idx;
+  document.querySelectorAll('#po-mid .po-file-item').forEach((el,i)=>el.classList.toggle('on',i===idx));
+  const r=currentPoGroup.records[idx];
+  document.getElementById('po-right').innerHTML=`${r.photo_path?`<img class="po-preview-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="empty"><div class="empty-ic">📄</div>无图片</div>'}
+    <div class="mg" style="margin-top:12px">
+      <span class="lk">采购单号</span><span class="code">${r.po_code}</span>
+      <span class="lk">到货日期</span><span>${currentPoGroup.arrival_date||'—'}</span>
+      <span class="lk">箱码</span><span class="code">${r.box_code||'—'}</span>
+      <span class="lk">录入时间</span><span>${r.created_at}</span>
+      <span class="lk">备注</span><span>${r.notes||'—'}</span>
+      <span class="lk">错误订单</span><span>${r.error_count>0?`<span class="badge b-e">已关联 ${r.error_count} 条</span>`:'无'}</span>
+    </div>`;
 }
 function showMpoModal(){ mpoPhotoFile=null; ['mpo-code','mpo-box','mpo-notes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('mpo-ph-prev').style.display='none'; document.getElementById('mpo-ph-ph').style.display='flex'; document.getElementById('mpo-modal').classList.add('show'); setTimeout(()=>document.getElementById('mpo-code').focus(),100); }
 function onMpoPhoto(inp){ if(!inp.files[0])return; mpoPhotoFile=inp.files[0]; const fr=new FileReader(); fr.onload=e=>{document.getElementById('mpo-ph-prev').src=e.target.result;document.getElementById('mpo-ph-prev').style.display='block';document.getElementById('mpo-ph-ph').style.display='none';}; fr.readAsDataURL(inp.files[0]); }
@@ -1060,7 +1234,7 @@ async function doDbImport(inp){ if(!inp.files[0])return; const fd=new FormData()
 // INIT
 // ════════════════════════════
 loadStats();
-loadBoxData();
+resetShipmentForm();
 goTab('box');
 setInterval(loadStats, 60000);
 </script>

@@ -30,6 +30,39 @@ function fmtArrDate(d) {
   return `${y}年${parseInt(m)}月${parseInt(day)}日`;
 }
 
+function normalizeShipmentDate(input) {
+  const s = String(input || '').trim().replace(/[\/.]/g, '-');
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) {
+    const [y,m,d] = s.split('-');
+    return `${y}${String(m).padStart(2,'0')}${String(d).padStart(2,'0')}`;
+  }
+  if (/^\d{8}$/.test(s)) return s;
+  return null;
+}
+function displayShipmentDate(ymd8) {
+  if (!ymd8 || ymd8.length !== 8) return ymd8 || '—';
+  return `${ymd8.slice(0,4)}-${ymd8.slice(4,6)}-${ymd8.slice(6,8)}`;
+}
+function buildShipmentCodes(shipmentDateRaw, items) {
+  const shipment_date = normalizeShipmentDate(shipmentDateRaw);
+  if (!shipment_date) throw new Error('发货日期格式错误');
+  if (!Array.isArray(items) || !items.length) throw new Error('请至少填写一个代号');
+  const boxes = [];
+  let seq = 1;
+  for (const item of items) {
+    const type_code = String(item.type_code || item.code || '').trim().toUpperCase();
+    const count = parseInt(item.count, 10);
+    if (!type_code) throw new Error('存在空代号');
+    if (!/^[A-Z0-9]+$/.test(type_code)) throw new Error(`代号格式错误：${type_code}`);
+    if (!Number.isInteger(count) || count <= 0) throw new Error(`箱数错误：${type_code}`);
+    for (let i=0;i<count;i++) {
+      boxes.push({ shipment_date, type_code, seq_no: seq, box_code: `${shipment_date}${type_code}${String(seq).padStart(3,'0')}` });
+      seq++;
+    }
+  }
+  return { shipment_date, total_count: boxes.length, boxes };
+}
+
 // ── DB ────────────────────────────────────────────────────
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
@@ -82,12 +115,33 @@ db.exec(`
     operator TEXT DEFAULT '管理员',
     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
   );
+  CREATE TABLE IF NOT EXISTS shipment_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_date TEXT NOT NULL,
+    total_count INTEGER NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL,
+    operator TEXT DEFAULT '管理员',
+    revoked_at TEXT,
+    revoked_by TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+  );
+  CREATE TABLE IF NOT EXISTS shipment_boxes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL REFERENCES shipment_batches(id) ON DELETE CASCADE,
+    shipment_date TEXT NOT NULL,
+    type_code TEXT NOT NULL,
+    seq_no INTEGER NOT NULL,
+    box_code TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+  );
   CREATE INDEX IF NOT EXISTS idx_arrivals_box  ON arrivals(box_code);
   CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_box        ON po_records(box_code);
   CREATE INDEX IF NOT EXISTS idx_po_code       ON po_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_po        ON error_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_status    ON error_records(review_status);
+  CREATE INDEX IF NOT EXISTS idx_ship_box      ON shipment_boxes(box_code);
+  CREATE INDEX IF NOT EXISTS idx_ship_date     ON shipment_boxes(shipment_date);
 `);
 [
   'ALTER TABLE arrivals ADD COLUMN arrival_date TEXT',
@@ -146,73 +200,113 @@ app.get('/api/health', (req,res) => res.json({ status:'ok' }));
 // ════════════════════════════════════════
 app.get('/api/boxes/table', (req, res) => {
   const arrivals = db.prepare('SELECT * FROM arrivals ORDER BY box_code').all();
+  const shippedRows = db.prepare(`SELECT sb.*, b.revoked_at FROM shipment_boxes sb
+    JOIN shipment_batches b ON b.id=sb.batch_id
+    WHERE b.revoked_at IS NULL
+    ORDER BY sb.box_code`).all();
 
-  // Group arrived boxes
-  const arrived = {}; // sdate -> type_code -> {seq -> arrival}
+  const shipped = {}; // sdate -> seq -> shipment cell
+  const arrivedOnly = {}; // sdate -> seq -> arrival cell with no shipment record
+  const allDates = new Set();
+  let global_max_seq = 0;
+
+  for (const s of shippedRows) {
+    const p = parseBoxCode(s.box_code);
+    if (!p) continue;
+    allDates.add(p.date);
+    if (!shipped[p.date]) shipped[p.date] = {};
+    shipped[p.date][p.seq] = {
+      type_code: s.type_code,
+      shipped: true,
+      arrived: false,
+      box_code: s.box_code,
+      shipment_batch_id: s.batch_id,
+      shipment_date: displayShipmentDate(s.shipment_date),
+      arrival_date: null,
+      arrival_id: null,
+      source: 'shipment'
+    };
+    global_max_seq = Math.max(global_max_seq, p.seq);
+  }
+
   for (const a of arrivals) {
     const p = parseBoxCode(a.box_code);
     if (!p) continue;
-    if (!arrived[p.date]) arrived[p.date] = {};
-    if (!arrived[p.date][p.type]) arrived[p.date][p.type] = {};
-    arrived[p.date][p.type][p.seq] = a;
+    allDates.add(p.date);
+    global_max_seq = Math.max(global_max_seq, p.seq);
+    if (shipped[p.date]?.[p.seq]) {
+      shipped[p.date][p.seq] = {
+        ...shipped[p.date][p.seq],
+        arrived: true,
+        arrival_date: a.arrival_date,
+        arrival_id: a.id,
+        unboxed_at: a.unboxed_at || null,
+        worker_name: a.worker_name || ''
+      };
+    } else {
+      if (!arrivedOnly[p.date]) arrivedOnly[p.date] = {};
+      arrivedOnly[p.date][p.seq] = {
+        type_code: p.type,
+        shipped: false,
+        arrived: true,
+        box_code: a.box_code,
+        shipment_batch_id: null,
+        shipment_date: displayShipmentDate(p.date),
+        arrival_date: a.arrival_date,
+        arrival_id: a.id,
+        unboxed_at: a.unboxed_at || null,
+        worker_name: a.worker_name || '',
+        source: 'arrival_only'
+      };
+    }
   }
 
-  const shipment_dates = Object.keys(arrived).sort().reverse(); // newest first
-
-  // For each date, build type ranges and cell map
-  const table = {};          // sdate -> seq -> cell
-  const date_meta = {};      // sdate -> { types: {type_code:{min,max,count}}, max_seq }
-  let global_max_seq = 0;
+  const shipment_dates = Array.from(allDates).sort().reverse();
+  const table = {};
+  const date_meta = {};
 
   for (const sdate of shipment_dates) {
-    const types = arrived[sdate];
     table[sdate] = {};
-    const type_ranges = {};
-
-    // First pass: determine type ranges from arrived boxes
-    for (const [tc, seqs] of Object.entries(types)) {
-      const nums = Object.keys(seqs).map(Number);
-      type_ranges[tc] = { min: Math.min(...nums), max: Math.max(...nums), count: nums.length };
+    const typeRanges = {};
+    const seqTypeMap = {};
+    const cells = { ...(shipped[sdate] || {}), ...(arrivedOnly[sdate] || {}) };
+    const seqs = Object.keys(cells).map(Number).sort((a,b)=>a-b);
+    for (const seq of seqs) {
+      const c = cells[seq];
+      table[sdate][seq] = c;
+      if (!typeRanges[c.type_code]) typeRanges[c.type_code] = { min: seq, max: seq, count: 0 };
+      typeRanges[c.type_code].min = Math.min(typeRanges[c.type_code].min, seq);
+      typeRanges[c.type_code].max = Math.max(typeRanges[c.type_code].max, seq);
+      typeRanges[c.type_code].count += 1;
+      seqTypeMap[seq] = c.type_code;
     }
-
-    // Build seqToType map (for missing cells)
-    const seqToType = {};
-    for (const [tc, {min, max}] of Object.entries(type_ranges)) {
-      for (let s = min; s <= max; s++) seqToType[s] = tc;
-    }
-
-    const date_max_seq = Math.max(...Object.values(type_ranges).map(r => r.max));
-    global_max_seq = Math.max(global_max_seq, date_max_seq);
-
-    // Fill arrived cells
-    for (const [tc, seqs] of Object.entries(types)) {
-      for (const [s, a] of Object.entries(seqs)) {
-        table[sdate][parseInt(s)] = {
-          type_code: tc, arrived: true,
-          box_code: a.box_code, arrival_date: a.arrival_date,
-          arrival_id: a.id, unboxed_at: a.unboxed_at || null,
-          worker_name: a.worker_name || ''
-        };
-      }
-    }
-
-    // Fill missing cells (within each type's range)
-    for (const [tc, {min, max}] of Object.entries(type_ranges)) {
-      for (let s = min; s <= max; s++) {
+    for (const [tc, range] of Object.entries(typeRanges)) {
+      for (let s = range.min; s <= range.max; s++) {
         if (!table[sdate][s]) {
           table[sdate][s] = {
-            type_code: tc, arrived: false,
+            type_code: tc,
+            shipped: false,
+            arrived: false,
             box_code: `${sdate}${tc}${String(s).padStart(3,'0')}`,
-            arrival_date: null
+            shipment_batch_id: null,
+            shipment_date: displayShipmentDate(sdate),
+            arrival_date: null,
+            arrival_id: null,
+            source: 'gap'
           };
         }
       }
     }
-
+    const shipped_count = Object.values(table[sdate]).filter(c=>c.shipped).length;
+    const arrived_count = Object.values(table[sdate]).filter(c=>c.arrived).length;
     date_meta[sdate] = {
       display: fmtShipDate(sdate),
-      types: type_ranges,
-      max_seq: date_max_seq
+      display_short: displayShipmentDate(sdate),
+      types: typeRanges,
+      max_seq: seqs.length ? Math.max(...Object.keys(table[sdate]).map(Number)) : 0,
+      shipped_count,
+      arrived_count,
+      remaining_count: Math.max(shipped_count - Object.values(table[sdate]).filter(c=>c.shipped && c.arrived).length, 0)
     };
   }
 
@@ -238,6 +332,76 @@ app.get('/api/arrivals/dates', (req, res) => {
     }))
   }));
   res.json(result);
+});
+
+// ════════════════════════════════════════
+// SHIPMENTS
+// ════════════════════════════════════════
+app.get('/api/shipments/overview', (req, res) => {
+  const rows = db.prepare(`SELECT sb.*, b.id as batch_id, b.created_at as batch_created_at, b.revoked_at,
+    a.id as arrival_id, a.arrival_date
+    FROM shipment_boxes sb
+    JOIN shipment_batches b ON b.id=sb.batch_id
+    LEFT JOIN arrivals a ON a.box_code=sb.box_code
+    WHERE b.revoked_at IS NULL
+    ORDER BY sb.shipment_date DESC, sb.seq_no ASC`).all();
+  const byDate = {};
+  for (const r of rows) {
+    if (!byDate[r.shipment_date]) byDate[r.shipment_date] = { shipment_date:r.shipment_date, display:displayShipmentDate(r.shipment_date), total:0, arrived:0, in_transit:0, type_summary:{}, boxes:[] };
+    const g = byDate[r.shipment_date];
+    g.total++;
+    if (r.arrival_id) g.arrived++; else g.in_transit++;
+    g.type_summary[r.type_code] = (g.type_summary[r.type_code] || 0) + 1;
+    g.boxes.push({ box_code:r.box_code, type_code:r.type_code, seq_no:r.seq_no, arrival_date:r.arrival_date || null });
+  }
+  res.json(Object.values(byDate).sort((a,b)=>b.shipment_date.localeCompare(a.shipment_date)));
+});
+app.post('/api/shipments/batch', (req, res) => {
+  try {
+    const { shipment_date, total_count, items, operator } = req.body;
+    const built = buildShipmentCodes(shipment_date, items);
+    if (parseInt(total_count,10) !== built.total_count) return res.status(400).json({ error:'总箱数与代号箱数合计不一致' });
+    const exists = db.prepare(`SELECT sb.box_code FROM shipment_boxes sb JOIN shipment_batches b ON b.id=sb.batch_id WHERE b.revoked_at IS NULL AND sb.box_code IN (${built.boxes.map(()=>'?').join(',')}) LIMIT 1`).get(...built.boxes.map(b=>b.box_code));
+    if (exists) return res.status(409).json({ error:`箱号已存在：${exists.box_code}` });
+    let batchId;
+    db.transaction(() => {
+      const r = db.prepare('INSERT INTO shipment_batches (shipment_date,total_count,payload_json,operator) VALUES(?,?,?,?)').run(built.shipment_date, built.total_count, JSON.stringify(items), operator || '管理员');
+      batchId = r.lastInsertRowid;
+      const stmt = db.prepare('INSERT INTO shipment_boxes (batch_id,shipment_date,type_code,seq_no,box_code) VALUES(?,?,?,?,?)');
+      for (const box of built.boxes) stmt.run(batchId, box.shipment_date, box.type_code, box.seq_no, box.box_code);
+    })();
+    res.json({ success:true, batch_id:batchId, shipment_date:built.shipment_date, total_count:built.total_count, boxes:built.boxes });
+  } catch (e) { res.status(400).json({ error:e.message }); }
+});
+app.get('/api/shipments/batches', (req, res) => {
+  const rows = db.prepare(`SELECT b.*,
+    (SELECT COUNT(*) FROM shipment_boxes sb WHERE sb.batch_id=b.id) as generated_count,
+    (SELECT COUNT(*) FROM shipment_boxes sb JOIN arrivals a ON a.box_code=sb.box_code WHERE sb.batch_id=b.id) as arrived_count
+    FROM shipment_batches b ORDER BY b.created_at DESC LIMIT 50`).all();
+  res.json(rows.map(r=>({ ...r, remaining_count: Math.max((r.generated_count||0)-(r.arrived_count||0),0) })));
+});
+app.delete('/api/shipments/batches/:id', (req, res) => {
+  const batch = db.prepare('SELECT * FROM shipment_batches WHERE id=?').get(req.params.id);
+  if (!batch) return res.status(404).json({ error:'未找到提交记录' });
+  if (batch.revoked_at) return res.status(400).json({ error:'该记录已撤回' });
+  db.prepare(`UPDATE shipment_batches SET revoked_at=strftime('%Y-%m-%d %H:%M:%S','now','localtime'), revoked_by=? WHERE id=?`).run('管理员', req.params.id);
+  res.json({ success:true });
+});
+app.post('/api/shipments/fill-remaining', (req, res) => {
+  const { shipment_date, arrival_date, worker_name } = req.body;
+  const sdate = normalizeShipmentDate(shipment_date);
+  if (!sdate || !arrival_date) return res.status(400).json({ error:'参数不完整' });
+  const rows = db.prepare(`SELECT sb.box_code FROM shipment_boxes sb
+    JOIN shipment_batches b ON b.id=sb.batch_id
+    LEFT JOIN arrivals a ON a.box_code=sb.box_code
+    WHERE b.revoked_at IS NULL AND sb.shipment_date=? AND a.id IS NULL
+    ORDER BY sb.seq_no`).all(sdate);
+  let created = 0;
+  db.transaction(() => {
+    const stmt = db.prepare('INSERT INTO arrivals (box_code,arrival_date,worker_name) VALUES(?,?,?)');
+    for (const r of rows) { stmt.run(r.box_code, arrival_date, worker_name || '整批补到货'); created++; }
+  })();
+  res.json({ success:true, created, shipment_date:sdate, arrival_date });
 });
 
 // ════════════════════════════════════════
@@ -373,13 +537,40 @@ app.get('/api/po/all', (req, res) => {
   const { sort='created_at', dir='DESC', search='' } = req.query;
   const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
   const col = validSort[sort]||'pr.created_at', d = dir==='ASC'?'ASC':'DESC';
-  let sql = `SELECT pr.*, a.scanned_at as arrival_date, a.unboxed_at,
+  let sql = `SELECT pr.*, a.arrival_date as arrival_date, a.unboxed_at,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code`;
   const p = [];
   if (search) { sql += ' WHERE pr.po_code LIKE ?'; p.push(`%${search}%`); }
   sql += ` ORDER BY ${col} ${d}`;
   res.json(db.prepare(sql).all(...p));
+});
+app.get('/api/po/overview', (req, res) => {
+  const search = String(req.query.search || '').trim();
+  let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.photo_path, pr.notes, pr.created_at,
+    COALESCE(a.arrival_date, date(pr.created_at)) as group_arrival_date,
+    (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
+    FROM po_records pr
+    LEFT JOIN arrivals a ON a.box_code=pr.box_code`;
+  const params = [];
+  if (search) { sql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
+  sql += ' ORDER BY group_arrival_date DESC, pr.po_code ASC, pr.created_at ASC';
+  const rows = db.prepare(sql).all(...params);
+  const byDate = {};
+  for (const r of rows) {
+    const adate = r.group_arrival_date || '未关联到货';
+    if (!byDate[adate]) byDate[adate] = { arrival_date: adate, po_map: {} };
+    if (!byDate[adate].po_map[r.po_code]) byDate[adate].po_map[r.po_code] = { po_code: r.po_code, error_count: 0, has_error: false, records: [] };
+    const p = byDate[adate].po_map[r.po_code];
+    p.records.push(r);
+    p.error_count += Number(r.error_count || 0);
+    if (Number(r.error_count || 0) > 0) p.has_error = true;
+  }
+  const result = Object.values(byDate).map(g => ({
+    arrival_date: g.arrival_date,
+    pos: Object.values(g.po_map).sort((a,b)=>a.po_code.localeCompare(b.po_code))
+  })).sort((a,b)=>String(b.arrival_date).localeCompare(String(a.arrival_date)));
+  res.json(result);
 });
 
 // ════════════════════════════════════════
