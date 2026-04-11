@@ -131,17 +131,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .sheet{width:100%;background:#fff;border-radius:20px 20px 0 0;padding:20px;
   padding-bottom:calc(20px + env(safe-area-inset-bottom,0))}
 .sheet-title{font-size:16px;font-weight:700;text-align:center;margin-bottom:14px}
-#qr-reader{width:100%;border-radius:12px;overflow:hidden;background:#000}
-#qr-reader video{object-fit:cover !important}
-.scan-hint{margin-top:10px;font-size:12px;line-height:1.45;color:var(--muted);text-align:center}
-.scan-toolbar{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-.torch-btn,.scan-tool-btn,.camera-select{flex:1;height:40px;border:1.5px solid var(--border);background:#fff;color:var(--muted);
-  border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
-.camera-select{padding:0 10px;min-width:0}
-.torch-btn.on{border-color:#f59e0b;background:#fff7ed;color:#b45309}
-.torch-btn:disabled,.scan-tool-btn:disabled,.camera-select:disabled{opacity:.45;cursor:not-allowed}
-.scan-photo-actions{display:flex;gap:8px;margin-top:10px}
-.scan-photo-note{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted);text-align:center}
+#qr-reader{width:100%;border-radius:12px;overflow:hidden}
 .sheet-cancel{width:100%;height:44px;border:none;background:#f1f5f9;border-radius:10px;
   font-size:15px;cursor:pointer;margin-top:12px;font-family:inherit}
 
@@ -360,18 +350,8 @@ input[type=date].inp{-webkit-appearance:none}
 <!-- Scanner overlay -->
 <div class="overlay" id="scan-overlay">
   <div class="sheet">
-    <div class="sheet-title" id="scan-title">Scan QR / Barcode</div>
+    <div class="sheet-title">Scan QR / Barcode</div>
     <div id="qr-reader"></div>
-    <div class="scan-toolbar">
-      <select id="camera-select" class="camera-select" onchange="onCameraChange(this.value)" style="display:none"></select>
-      <button type="button" class="torch-btn" id="torch-btn" onclick="toggleTorch()" style="display:none">🔦 Flash Off</button>
-    </div>
-    <div class="scan-photo-actions">
-      <button type="button" class="scan-tool-btn" id="scan-photo-btn" onclick="triggerScanPhoto()">📸 Take Photo to Recognize</button>
-    </div>
-    <input type="file" id="scan-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onScanPhotoSelected(this)">
-    <div class="scan-hint" id="scan-hint">Hold the code inside the frame and keep the phone steady.</div>
-    <div class="scan-photo-note" id="scan-photo-note">If live scanning is unclear on iPhone, switch lens or take a photo for fallback recognition.</div>
     <button class="sheet-cancel" onclick="closeScan()">Cancel</button>
   </div>
 </div>
@@ -401,12 +381,6 @@ let currentRole  = ''; // 'r' or 'pc'
 let scanner = null, scanTarget = null, scanCb = null;
 let audioCtx = null;
 let scanStarting = false;
-let scanMode = 'box';
-const SCAN_CAMERA_KEY_PREFIX = 'wh_scan_camera_v1:';
-const scanState = {
-  lastText:'', lastAt:0, torchAvailable:false, torchOn:false,
-  cameras:[], currentCameraId:'', starting:false, sourceKey:''
-};
 
 const APP_VERSION = 'v12 trial · 2026-04-11 · a8ba68f';
 
@@ -537,92 +511,26 @@ function pcTab(t) {
 // ════════════════════════════
 // SCANNER
 // ════════════════════════════
-function setScanHint(mode='box') {
-  const el = document.getElementById('scan-hint');
-  if (!el) return;
-  el.textContent = mode === 'po'
-    ? 'Hold the barcode horizontally in the center strip and keep a steady distance.'
-    : 'Hold the QR code inside the square and keep the whole code visible.';
-}
-
-function updateTorchButton() {
-  const btn = document.getElementById('torch-btn');
-  if (!btn) return;
-  if (!scanState.torchAvailable) {
-    btn.style.display = 'none';
-    btn.disabled = true;
-    btn.classList.remove('on');
-    btn.textContent = '🔦 Flash Off';
-    return;
-  }
-  btn.style.display = 'block';
-  btn.disabled = false;
-  btn.classList.toggle('on', scanState.torchOn);
-  btn.textContent = scanState.torchOn ? '🔦 Flash On' : '🔦 Flash Off';
-}
-
-function getCameraLabel(camera, index) {
-  const label = (camera?.label || '').trim();
-  if (!label) return `Camera ${index + 1}`;
-  return label;
-}
-
-function isRearCamera(camera) {
-  return /back|rear|environment|wide|ultra|tele/i.test(camera?.label || '');
-}
-
-function updateCameraSelect() {
-  const select = document.getElementById('camera-select');
-  if (!select) return;
-  const cams = Array.isArray(scanState.cameras) ? scanState.cameras : [];
-  if (cams.length <= 1) {
-    select.style.display = 'none';
-    select.innerHTML = '';
-    return;
-  }
-  select.innerHTML = cams.map((camera, index) => `
-    <option value="${camera.id}">${getCameraLabel(camera, index)}</option>
-  `).join('');
-  select.value = scanState.currentCameraId || cams[0].id;
-  select.style.display = 'block';
-}
-
-function getScanCameraStorageKey(sourceKey='') {
-  return sourceKey ? `${SCAN_CAMERA_KEY_PREFIX}${sourceKey}` : '';
-}
-
-function getSavedScanCameraId(sourceKey='') {
-  const key = getScanCameraStorageKey(sourceKey);
-  if (!key) return '';
-  try { return localStorage.getItem(key) || ''; } catch { return ''; }
-}
-
-function saveScanCameraId(sourceKey='', cameraId='') {
-  const key = getScanCameraStorageKey(sourceKey);
-  if (!key || !cameraId) return;
-  try { localStorage.setItem(key, cameraId); } catch {}
-}
-
-function getScanConfig(mode='box') {
+function getScanProfile(mode='box') {
   if (mode === 'po') {
     return {
       title: 'Scan PO Barcode',
       config: {
-        fps: 12,
-        aspectRatio: 1.7778,
-        disableFlip: true,
+        fps: 14,
+        aspectRatio: 1.777778,
         qrbox: (vw, vh) => ({
-          width: Math.max(240, Math.min(vw - 40, Math.floor(vw * 0.88))),
-          height: Math.max(90, Math.min(140, Math.floor(vh * 0.18)))
+          width: Math.max(260, Math.min(vw - 24, Math.floor(vw * 0.9))),
+          height: Math.max(110, Math.min(180, Math.floor(vh * 0.28)))
         }),
         formatsToSupport: [
           Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.ITF,
           Html5QrcodeSupportedFormats.UPC_A,
-          Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.ITF
+          Html5QrcodeSupportedFormats.UPC_E
         ],
         supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA],
         experimentalFeatures: { useBarCodeDetectorIfSupported: true }
@@ -633,180 +541,83 @@ function getScanConfig(mode='box') {
   return {
     title: 'Scan Box QR Code',
     config: {
-      fps: 10,
-      qrbox: { width: 240, height: 240 },
+      fps: 12,
+      qrbox: (vw, vh) => {
+        const edge = Math.max(200, Math.min(280, Math.floor(Math.min(vw, vh) * 0.62)));
+        return { width: edge, height: edge };
+      },
       formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
       supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
     }
   };
 }
 
-async function applyTorchAvailability() {
-  scanState.torchAvailable = false;
-  scanState.torchOn = false;
+async function applyPreferredCameraControls() {
   try {
-    const capabilities = scanner?.getRunningTrackCapabilities?.() || {};
-    scanState.torchAvailable = !!capabilities.torch;
+    await scanner?.applyVideoConstraints?.({ advanced: [{ focusMode: 'continuous' }] });
   } catch {}
-  updateTorchButton();
-}
-
-async function toggleTorch() {
-  if (!scanner || !scanState.torchAvailable) return;
   try {
-    scanState.torchOn = !scanState.torchOn;
-    await scanner.applyVideoConstraints({ advanced: [{ torch: scanState.torchOn }] });
-    updateTorchButton();
-  } catch {
-    scanState.torchOn = false;
-    updateTorchButton();
-  }
+    await scanner?.applyVideoConstraints?.({ advanced: [{ zoom: 1 }] });
+  } catch {}
 }
 
-function handleScanSuccess(code) {
-  const now = Date.now();
-  if (code === scanState.lastText && now - scanState.lastAt < 1200) return;
-  scanState.lastText = code;
-  scanState.lastAt = now;
-  closeScan();
-  if (scanCb) scanCb(code);
-  else if (scanTarget && document.getElementById(scanTarget)) {
-    document.getElementById(scanTarget).value = code;
-    toast('✅ Scanned: ' + code, 'ok');
-  }
-}
-
-async function startScanner(mode='box', cameraId='') {
-  const profile = getScanConfig(mode);
-  scanState.starting = true;
-  try {
-    const targetCameraId = cameraId || scanState.currentCameraId;
-    if (targetCameraId) {
-      scanState.currentCameraId = targetCameraId;
-      await scanner.start(targetCameraId, profile.config, handleScanSuccess, () => {});
-    } else {
-      await scanner.start({ facingMode:{ ideal:'environment' } }, profile.config, handleScanSuccess, () => {});
+async function startScannerWithFallbacks(mode='box') {
+  const profile = getScanProfile(mode);
+  const options = profile.config;
+  const onScan = (code) => {
+    closeScan();
+    if (scanCb) scanCb(code);
+    else if (scanTarget && document.getElementById(scanTarget)) {
+      document.getElementById(scanTarget).value = code;
+      toast('✅ Scanned: ' + code, 'ok');
     }
-    await applyTorchAvailability();
-  } finally {
-    scanState.starting = false;
-  }
-}
+  };
+  let lastError = null;
 
-async function loadCameraOptions() {
   try {
     const cameras = await Html5Qrcode.getCameras();
-    scanState.cameras = Array.isArray(cameras) ? cameras : [];
-    const savedCameraId = getSavedScanCameraId(scanState.sourceKey);
-    const savedCamera = savedCameraId && scanState.cameras.find(camera => camera.id === savedCameraId);
-    if (savedCamera) {
-      scanState.currentCameraId = savedCamera.id;
-    } else if (!scanState.currentCameraId && scanState.cameras.length) {
-      const rearCameras = scanState.cameras.filter(isRearCamera);
-      const preferred = rearCameras[0] || scanState.cameras[scanState.cameras.length - 1] || scanState.cameras[0];
-      scanState.currentCameraId = preferred?.id || '';
+    if (cameras && cameras.length) {
+      const preferred = cameras.find(c => /back|rear|environment/i.test(c.label || ''))
+        || cameras[cameras.length - 1]
+        || cameras[0];
+      await scanner.start(preferred.id, options, onScan, () => {});
+      await applyPreferredCameraControls();
+      return;
     }
-  } catch {
-    scanState.cameras = [];
+  } catch (err) {
+    lastError = err;
   }
-  updateCameraSelect();
-}
 
-async function restartScanner(cameraId='') {
-  if (!scanner || scanState.starting) return;
-  try {
-    await scanner.stop();
-  } catch {}
-  scanState.torchAvailable = false;
-  scanState.torchOn = false;
-  updateTorchButton();
-  try {
-    await startScanner(scanMode, cameraId);
-  } catch {
-    toast('Camera switch failed, please try another lens or photo fallback.','err');
-  }
-}
+  const configs = [
+    { facingMode:{ exact:'environment' } },
+    { facingMode:{ ideal:'environment' } },
+    { facingMode:'environment' },
+    { facingMode:'user' }
+  ];
 
-async function onCameraChange(cameraId) {
-  if (!cameraId || cameraId === scanState.currentCameraId) return;
-  scanState.currentCameraId = cameraId;
-  saveScanCameraId(scanState.sourceKey, cameraId);
-  await restartScanner(cameraId);
-}
-
-function triggerScanPhoto() {
-  const input = document.getElementById('scan-photo-input');
-  if (input) {
-    input.value = '';
-    input.click();
-  }
-}
-
-async function decodeSelectedPhoto(file) {
-  if (!file) return '';
-  const tempId = `scan-file-reader-${Date.now()}`;
-  const tempNode = document.createElement('div');
-  tempNode.id = tempId;
-  tempNode.style.display = 'none';
-  document.body.appendChild(tempNode);
-  const tempScanner = new Html5Qrcode(tempId);
-  try {
-    return await tempScanner.scanFile(file, true);
-  } catch {
+  for (const config of configs) {
     try {
-      const bitmap = await createImageBitmap(file);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(bitmap, 0, 0);
-      bitmap.close?.();
-      const fallbackFile = await new Promise(resolve => canvas.toBlob(blob => resolve(blob ? new File([blob], file.name || 'capture.jpg', { type: 'image/jpeg' }) : null), 'image/jpeg', 0.96));
-      if (!fallbackFile) throw new Error('canvas decode failed');
-      return await tempScanner.scanFile(fallbackFile, true);
-    } catch {
-      return '';
+      await scanner.start(config, options, onScan, () => {});
+      await applyPreferredCameraControls();
+      return;
+    } catch (err) {
+      lastError = err;
     }
-  } finally {
-    tempScanner.clear().catch(()=>{});
-    tempNode.remove();
   }
-}
 
-async function onScanPhotoSelected(input) {
-  const file = input?.files?.[0];
-  if (!file) return;
-  const code = await decodeSelectedPhoto(file);
-  if (code) {
-    toast('✅ Photo recognized: ' + code, 'ok');
-    handleScanSuccess(code);
-    return;
-  }
-  toast('Photo recognition failed, please switch lens or retake a clearer photo.','err');
+  throw lastError;
 }
-
-async function openScan(targetId, cb, mode='box', sourceKey='') {
+async function openScan(targetId, cb, mode='box') {
   if (scanner || scanStarting) return;
   scanTarget = targetId;
   scanCb = cb;
-  scanMode = mode;
   scanStarting = true;
-  scanState.lastText = '';
-  scanState.lastAt = 0;
-  scanState.torchAvailable = false;
-  scanState.torchOn = false;
-  scanState.cameras = [];
-  scanState.sourceKey = sourceKey || targetId || mode;
-  scanState.currentCameraId = getSavedScanCameraId(scanState.sourceKey);
-  document.getElementById('scan-title').textContent = getScanConfig(mode).title;
-  setScanHint(mode);
-  updateTorchButton();
-  updateCameraSelect();
+  document.querySelector('.sheet-title').textContent = getScanProfile(mode).title;
   document.getElementById('scan-overlay').classList.add('on');
   scanner = new Html5Qrcode('qr-reader');
   try {
-    await loadCameraOptions();
-    await startScanner(mode, scanState.currentCameraId);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    await startScannerWithFallbacks(mode);
   } catch {
     toast('Cannot access camera. Please allow camera permission, then try again.','err');
     closeScan();
@@ -816,15 +627,6 @@ async function openScan(targetId, cb, mode='box', sourceKey='') {
 }
 function closeScan() {
   document.getElementById('scan-overlay').classList.remove('on');
-  scanState.torchAvailable = false;
-  scanState.torchOn = false;
-  scanState.cameras = [];
-  scanState.currentCameraId = '';
-  scanState.sourceKey = '';
-  updateTorchButton();
-  updateCameraSelect();
-  const photoInput = document.getElementById('scan-photo-input');
-  if (photoInput) photoInput.value = '';
   if (scanner) { scanner.stop().catch(()=>{}).finally(()=>{ scanner.clear(); scanner=null; document.getElementById('qr-reader').innerHTML=''; }); }
   else { document.getElementById('qr-reader').innerHTML=''; }
   scanStarting = false;
@@ -942,7 +744,7 @@ function renderPoRows() {
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po', 'r-po-row-${row.id}')">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po')">📷</button>
         <button class="pr-del" onclick="removePoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="ph-${row.id}" accept="image/*" capture="environment"
@@ -1011,7 +813,7 @@ function renderPcPoRows(){
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po', 'pc-po-row-${row.id}')">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po')">📷</button>
         <button class="pr-del" onclick="removePcPoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="pc-ph-${row.id}" accept="image/*"
