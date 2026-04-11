@@ -215,7 +215,7 @@ input[type=date].inp{-webkit-appearance:none}
           <label class="lbl">Box QR Code</label>
           <div class="rw">
             <input class="inp" id="r-arr-box" placeholder="Scan or type box code" autocomplete="off">
-            <button class="scan-btn" onclick="openScan('r-arr-box', onArrivalScan)">📷</button>
+            <button class="scan-btn" onclick="openScan('r-arr-box', onArrivalScan, 'box')">📷</button>
           </div>
         </div>
         <button class="btn btn-primary" onclick="submitArrival()">✅ Confirm Arrival</button>
@@ -234,7 +234,7 @@ input[type=date].inp{-webkit-appearance:none}
           <div id="r-ub-unlocked">
             <div class="rw">
               <input class="inp" id="r-ub-box" placeholder="Scan or type box code" autocomplete="off" onblur="tryLockBox()">
-              <button class="scan-btn" onclick="openScan('r-ub-box', onBoxScan)">📷</button>
+              <button class="scan-btn" onclick="openScan('r-ub-box', onBoxScan, 'box')">📷</button>
             </div>
             <div class="flow-tip" id="r-ub-box-tip"><strong>Next:</strong> scan box code first, then keep this box fixed while you add PO photos.</div>
           </div>
@@ -322,7 +322,7 @@ input[type=date].inp{-webkit-appearance:none}
           <label class="lbl">① PO Barcode</label>
           <div class="rw">
             <input class="inp" id="pc-err-po" placeholder="Scan or type PO code" autocomplete="off">
-            <button class="scan-btn" onclick="openScan('pc-err-po', null)">📷</button>
+            <button class="scan-btn" onclick="openScan('pc-err-po', null, 'po')">📷</button>
           </div>
         </div>
 
@@ -511,15 +511,59 @@ function pcTab(t) {
 // ════════════════════════════
 // SCANNER
 // ════════════════════════════
-async function startScannerWithFallbacks() {
-  const options = {
-    fps:10,
-    qrbox:(vw,vh)=>{
-      const edge = Math.max(220, Math.min(320, Math.floor(Math.min(vw, vh) * 0.72)));
-      return { width:edge, height:edge };
-    },
-    supportedScanTypes:[Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+function getScanProfile(mode='box') {
+  if (mode === 'po') {
+    return {
+      title: 'Scan PO Barcode',
+      config: {
+        fps: 14,
+        aspectRatio: 1.777778,
+        qrbox: (vw, vh) => ({
+          width: Math.max(260, Math.min(vw - 24, Math.floor(vw * 0.9))),
+          height: Math.max(110, Math.min(180, Math.floor(vh * 0.28)))
+        }),
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E
+        ],
+        supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA],
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+      }
+    };
+  }
+
+  return {
+    title: 'Scan Box QR Code',
+    config: {
+      fps: 12,
+      qrbox: (vw, vh) => {
+        const edge = Math.max(200, Math.min(280, Math.floor(Math.min(vw, vh) * 0.62)));
+        return { width: edge, height: edge };
+      },
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+    }
   };
+}
+
+async function applyPreferredCameraControls() {
+  try {
+    await scanner?.applyVideoConstraints?.({ advanced: [{ focusMode: 'continuous' }] });
+  } catch {}
+  try {
+    await scanner?.applyVideoConstraints?.({ advanced: [{ zoom: 1 }] });
+  } catch {}
+}
+
+async function startScannerWithFallbacks(mode='box') {
+  const profile = getScanProfile(mode);
+  const options = profile.config;
   const onScan = (code) => {
     closeScan();
     if (scanCb) scanCb(code);
@@ -537,6 +581,7 @@ async function startScannerWithFallbacks() {
         || cameras[cameras.length - 1]
         || cameras[0];
       await scanner.start(preferred.id, options, onScan, () => {});
+      await applyPreferredCameraControls();
       return;
     }
   } catch (err) {
@@ -553,6 +598,7 @@ async function startScannerWithFallbacks() {
   for (const config of configs) {
     try {
       await scanner.start(config, options, onScan, () => {});
+      await applyPreferredCameraControls();
       return;
     } catch (err) {
       lastError = err;
@@ -561,16 +607,17 @@ async function startScannerWithFallbacks() {
 
   throw lastError;
 }
-async function openScan(targetId, cb) {
+async function openScan(targetId, cb, mode='box') {
   if (scanner || scanStarting) return;
   scanTarget = targetId;
   scanCb = cb;
   scanStarting = true;
+  document.querySelector('.sheet-title').textContent = getScanProfile(mode).title;
   document.getElementById('scan-overlay').classList.add('on');
   scanner = new Html5Qrcode('qr-reader');
   try {
     await new Promise(resolve => setTimeout(resolve, 120));
-    await startScannerWithFallbacks();
+    await startScannerWithFallbacks(mode);
   } catch {
     toast('Cannot access camera. Please allow camera permission, then try again.','err');
     closeScan();
@@ -697,7 +744,7 @@ function renderPoRows() {
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); })">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po')">📷</button>
         <button class="pr-del" onclick="removePoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="ph-${row.id}" accept="image/*" capture="environment"
@@ -766,7 +813,7 @@ function renderPcPoRows(){
       <div class="pr-top">
         <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
           oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); })">📷</button>
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po')">📷</button>
         <button class="pr-del" onclick="removePcPoRow(${row.id})">✕</button>
       </div>
       <input type="file" id="pc-ph-${row.id}" accept="image/*"
