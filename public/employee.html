@@ -25,6 +25,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .nav-logo{font-size:54px;text-align:center;margin-bottom:10px}
 .nav-title{color:#fff;font-size:26px;font-weight:800;text-align:center;letter-spacing:-.5px;margin-bottom:6px}
 .nav-sub{color:rgba(255,255,255,.65);font-size:14px;text-align:center;margin-bottom:40px}
+.version-badge{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  margin:0 auto 18px;padding:7px 12px;border-radius:999px;
+  background:rgba(15,23,42,.22);border:1px solid rgba(255,255,255,.18);
+  color:rgba(255,255,255,.92);font-size:12px;font-weight:700;letter-spacing:.2px}
 .role-card{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
   border-radius:18px;padding:22px 24px;cursor:pointer;margin-bottom:16px;
   backdrop-filter:blur(12px);transition:all .2s;display:flex;align-items:center;gap:16px}
@@ -160,6 +164,7 @@ input[type=date].inp{-webkit-appearance:none}
     <div class="nav-logo">📦</div>
     <div class="nav-title">Warehouse System</div>
     <div class="nav-sub">Select your role to continue</div>
+    <div class="version-badge" id="app-version">v12 trial</div>
 
     <div class="role-card" onclick="enterRole('receiver')">
       <div class="role-icon">🚚</div>
@@ -375,6 +380,9 @@ let pcName       = localStorage.getItem('wh_pc_name') || '';
 let currentRole  = ''; // 'r' or 'pc'
 let scanner = null, scanTarget = null, scanCb = null;
 let audioCtx = null;
+let scanStarting = false;
+
+const APP_VERSION = 'v12 trial · 2026-04-11 · a8ba68f';
 
 let boxLocked = false, lockedBoxCode = '';
 let rPoRows = [], rNextId = 1;
@@ -389,6 +397,8 @@ function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('on'));
   document.getElementById(id).classList.add('on');
 }
+
+document.getElementById('app-version').textContent = APP_VERSION;
 
 function enterRole(role) {
   currentRole = role;
@@ -412,6 +422,7 @@ function goNav() {
 
 function todayStr() { return new Date().toLocaleDateString('sv-SE'); }
 function ensureAudioContext() {
+  if (!window.AudioContext && !window.webkitAudioContext) return null;
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
   return audioCtx;
@@ -419,6 +430,7 @@ function ensureAudioContext() {
 function playToneSequence(tones) {
   try {
     const ctx = ensureAudioContext();
+    if (!ctx) return;
     let start = ctx.currentTime + 0.01;
     tones.forEach(t => {
       const osc = ctx.createOscillator();
@@ -499,27 +511,78 @@ function pcTab(t) {
 // ════════════════════════════
 // SCANNER
 // ════════════════════════════
-function openScan(targetId, cb) {
-  scanTarget = targetId;
-  scanCb = cb;
-  document.getElementById('scan-overlay').classList.add('on');
-  scanner = new Html5Qrcode('qr-reader');
-  scanner.start({ facingMode:{ ideal:'environment' } }, {
-    fps:12,
+async function startScannerWithFallbacks() {
+  const options = {
+    fps:10,
     qrbox:(vw,vh)=>{
       const edge = Math.max(220, Math.min(320, Math.floor(Math.min(vw, vh) * 0.72)));
       return { width:edge, height:edge };
     },
-    rememberLastUsedCamera:true,
-    aspectRatio:1.333334
-  },
-    (code) => { closeScan(); if (scanCb) scanCb(code); else { document.getElementById(scanTarget).value=code; toast('✅ Scanned: '+code,'ok'); } },
-    () => {}
-  ).catch(() => { toast('Cannot access camera. Check permissions.','err'); closeScan(); });
+    supportedScanTypes:[Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+  };
+  const onScan = (code) => {
+    closeScan();
+    if (scanCb) scanCb(code);
+    else if (scanTarget && document.getElementById(scanTarget)) {
+      document.getElementById(scanTarget).value = code;
+      toast('✅ Scanned: ' + code, 'ok');
+    }
+  };
+  let lastError = null;
+
+  try {
+    const cameras = await Html5Qrcode.getCameras();
+    if (cameras && cameras.length) {
+      const preferred = cameras.find(c => /back|rear|environment/i.test(c.label || ''))
+        || cameras[cameras.length - 1]
+        || cameras[0];
+      await scanner.start(preferred.id, options, onScan, () => {});
+      return;
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  const configs = [
+    { facingMode:{ exact:'environment' } },
+    { facingMode:{ ideal:'environment' } },
+    { facingMode:'environment' },
+    { facingMode:'user' }
+  ];
+
+  for (const config of configs) {
+    try {
+      await scanner.start(config, options, onScan, () => {});
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError;
+}
+async function openScan(targetId, cb) {
+  if (scanner || scanStarting) return;
+  scanTarget = targetId;
+  scanCb = cb;
+  scanStarting = true;
+  document.getElementById('scan-overlay').classList.add('on');
+  scanner = new Html5Qrcode('qr-reader');
+  try {
+    await new Promise(resolve => setTimeout(resolve, 120));
+    await startScannerWithFallbacks();
+  } catch {
+    toast('Cannot access camera. Please allow camera permission, then try again.','err');
+    closeScan();
+  } finally {
+    scanStarting = false;
+  }
 }
 function closeScan() {
   document.getElementById('scan-overlay').classList.remove('on');
   if (scanner) { scanner.stop().catch(()=>{}).finally(()=>{ scanner.clear(); scanner=null; document.getElementById('qr-reader').innerHTML=''; }); }
+  else { document.getElementById('qr-reader').innerHTML=''; }
+  scanStarting = false;
 }
 
 // ════════════════════════════
