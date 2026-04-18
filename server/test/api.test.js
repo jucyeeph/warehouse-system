@@ -16,7 +16,7 @@ async function startServer() {
     ...process.env,
     PORT: String(port),
     DB_PATH: path.join(root, 'data', 'warehouse.db'),
-    UPLOADS_DIR: path.join(root, 'data', 'updates'),
+    UPLOADS_DIR: path.join(root, 'data', 'uploads'),
     PUBLIC_DIR: path.resolve(__dirname, '..', '..', 'public')
   };
 

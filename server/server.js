@@ -10,7 +10,7 @@ const XLSX = require('xlsx');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || './data/warehouse.db';
-const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/updates';
+const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/uploads';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || '/public';
 
 if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
