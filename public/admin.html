@@ -901,12 +901,29 @@ async function savePoRecord(id){
   const poc=document.getElementById('epo-code').value.trim();
   const pon=document.getElementById('epo-notes').value.trim();
   if(!poc){ toast('采购单码不能为空','err'); return; }
-  try{ await api(`/api/po-record/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code:poc,notes:pon})}); closeEdit(); toast('✅ 已保存','ok'); const c=document.getElementById('box-inp').value.trim(); if(c) showBoxSide(c); }
+  try{
+    await api(`/api/po-record/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code:poc,notes:pon})});
+    closeEdit();
+    toast('✅ 已保存','ok');
+    const c=document.getElementById('box-inp').value.trim();
+    if(c) showBoxSide(c);
+    if(document.getElementById('tab-po')?.classList.contains('on')) loadPoAll();
+  }
   catch{ toast('失败','err'); }
 }
 function deletePoRecord(id){
   showConfirm('确认删除此采购单记录？', async()=>{
-    try{ await api(`/api/po-record/${id}`,{method:'DELETE'}); toast('✅ 已删除','ok'); const c=document.getElementById('box-inp').value.trim(); if(c) showBoxSide(c); }
+    try{
+      await api(`/api/po-record/${id}`,{method:'DELETE'});
+      toast('✅ 已删除','ok');
+      const c=document.getElementById('box-inp').value.trim();
+      if(c) showBoxSide(c);
+      if(document.getElementById('tab-po')?.classList.contains('on')){
+        currentPoGroup=null;
+        currentPoRecord=null;
+        await loadPoAll();
+      }
+    }
     catch{ toast('失败','err'); }
   });
 }
@@ -1200,6 +1217,10 @@ function selectPoRecord(idx){
   document.querySelectorAll('#po-mid .po-file-item').forEach((el,i)=>el.classList.toggle('on',i===idx));
   const r=currentPoGroup.records[idx];
   document.getElementById('po-right').innerHTML=`${r.photo_path?`<img class="po-preview-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="empty"><div class="empty-ic">📄</div>无图片</div>'}
+    <div style="display:flex;gap:6px;margin-top:12px">
+      <button class="btn btn-outline btn-sm" onclick="editPoRecord(${r.id},'${r.po_code.replace(/'/g,"\\'")}','${(r.notes||'').replace(/'/g,"\\'")}')">✏️ 编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="deletePoRecord(${r.id})">🗑️ 删除</button>
+    </div>
     <div class="mg" style="margin-top:12px">
       <span class="lk">采购单号</span><span class="code">${r.po_code}</span>
       <span class="lk">到货日期</span><span>${currentPoGroup.arrival_date||'—'}</span>

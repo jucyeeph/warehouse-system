@@ -322,12 +322,24 @@ function savePoRecord({ session_id=null, box_code='', po_code, photo_path=null, 
     : stmt.run(session_id||null, box_code||'', normalizedPo, photo_path, fileHash, notes||null, sync_source);
   return { id: result.lastInsertRowid, po_code: normalizedPo, photo_path, file_hash: fileHash, created_at: resolvedCreatedAt };
 }
+function pruneInvalidPoRecords() {
+  const rows = db.prepare('SELECT id, photo_path FROM po_records').all();
+  for (const row of rows) {
+    const photoPath = String(row.photo_path || '').trim();
+    const absPath = photoPath ? getPhotoAbsolutePath(photoPath) : null;
+    if (!photoPath || !absPath || !fs.existsSync(absPath)) {
+      db.prepare('UPDATE error_records SET linked_po_record_id=NULL WHERE linked_po_record_id=?').run(row.id);
+      db.prepare('DELETE FROM po_records WHERE id=?').run(row.id);
+    }
+  }
+}
 let filesystemSyncRunning = false;
 function syncFilesystemState() {
   if (filesystemSyncRunning) return;
   filesystemSyncRunning = true;
   try {
     ensureDir(UPLOADS_DIR);
+    pruneInvalidPoRecords();
     const seenArrivalBoxes = new Set();
     const seenPoIds = new Set();
     const arrivalRows = [];
@@ -468,10 +480,10 @@ app.get('/api/boxes/table', (req, res) => {
     ORDER BY sb.box_code`).all();
 
   const buildRowKey = (typeCode, seq) => `${typeCode}:${String(seq).padStart(3,'0')}`;
-  const sortRowKeysDesc = (a, b) => {
+  const sortRowKeys = (a, b) => {
     const [typeA, seqA] = String(a).split(':');
     const [typeB, seqB] = String(b).split(':');
-    return Number(seqB) - Number(seqA) || String(typeB).localeCompare(String(typeA));
+    return String(typeA).localeCompare(String(typeB)) || Number(seqA) - Number(seqB);
   };
 
   const shipped = {};
@@ -544,7 +556,7 @@ app.get('/api/boxes/table', (req, res) => {
     table[sdate] = {};
     const typeRanges = {};
     const cells = { ...(shipped[sdate] || {}), ...(arrivedOnly[sdate] || {}) };
-    const rowKeys = Object.keys(cells).sort(sortRowKeysDesc);
+    const rowKeys = Object.keys(cells).sort(sortRowKeys);
     for (const rowKey of rowKeys) {
       const c = cells[rowKey];
       table[sdate][rowKey] = c;
@@ -588,7 +600,7 @@ app.get('/api/boxes/table', (req, res) => {
     };
   }
 
-  const row_order = Array.from(globalRowKeys).sort(sortRowKeysDesc);
+  const row_order = Array.from(globalRowKeys).sort(sortRowKeys);
   res.json({ shipment_dates, global_max_seq: row_order.length, row_order, table, date_meta });
 });
 

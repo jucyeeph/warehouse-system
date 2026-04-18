@@ -138,14 +138,14 @@ test('server starts against an older database schema and applies migration safel
   }
 });
 
-test('boxes table keeps boxes when different type codes reuse sequence numbers and orders rows descending with explicit gaps', async () => {
+test('boxes table keeps boxes when different type codes reuse sequence numbers and orders rows ascending by type with gaps inside each type only', async () => {
   const server = await startServer();
   try {
     const upsert = await api(server, '/api/arrivals/bulk', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        box_codes: ['20260325DSH001', '20260325LCC001', '20260325LCC003'],
+        box_codes: ['20260325DSH001', '20260325DSH002', '20260325LCC001', '20260325LCC003'],
         arrival_date: '2026-03-25',
         worker_name: 'tester'
       })
@@ -155,13 +155,13 @@ test('boxes table keeps boxes when different type codes reuse sequence numbers a
     const tableRes = await api(server, '/api/boxes/table');
     assert.equal(tableRes.status, 200);
     assert.deepEqual(tableRes.body.date_meta['20260325'].types, {
-      DSH: { min: 1, max: 1, count: 1 },
+      DSH: { min: 1, max: 2, count: 2 },
       LCC: { min: 1, max: 3, count: 2 }
     });
     const cells = Object.values(tableRes.body.table['20260325'] || {});
     const codes = cells.map(c => c.box_code).sort();
-    assert.deepEqual(codes, ['20260325DSH001', '20260325LCC001', '20260325LCC002', '20260325LCC003']);
-    assert.deepEqual(tableRes.body.row_order, ['LCC:003', 'LCC:002', 'LCC:001', 'DSH:001']);
+    assert.deepEqual(codes, ['20260325DSH001', '20260325DSH002', '20260325LCC001', '20260325LCC002', '20260325LCC003']);
+    assert.deepEqual(tableRes.body.row_order, ['DSH:001', 'DSH:002', 'LCC:001', 'LCC:002', 'LCC:003']);
   } finally {
     await server.stop();
   }
@@ -289,6 +289,32 @@ test('filesystem sync removes deleted PO files and recreates renamed files as ne
     assert.equal(thirdSync.status, 200);
     const deletedRecord = thirdSync.body.find(r => r.id === renamedRecord.id);
     assert.equal(deletedRecord, undefined, 'expected record to be removed after image deletion');
+  } finally {
+    await server.stop();
+  }
+});
+
+test('po overview removes orphaned records that have no backing image file', async () => {
+  const server = await startServer();
+  try {
+    const bootstrap = `
+      const Database = require('better-sqlite3');
+      const db = new Database(${JSON.stringify(path.join(server.root, 'data', 'warehouse.db'))});
+      db.prepare("INSERT INTO po_records (box_code, po_code, photo_path, sync_source, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run('20260325LCC021', 'POMCMP099999', '2026-04-17/20260325LCC021/missing.jpg', 'manual', '2026-04-18 10:10:10');
+      db.close();
+    `;
+    const prep = spawn(process.execPath, ['-e', bootstrap], { cwd: path.resolve(__dirname, '..') });
+    await once(prep, 'exit');
+
+    const poRes = await api(server, '/api/po/overview');
+    assert.equal(poRes.status, 200);
+    const flattened = poRes.body.flatMap(g => g.pos.flatMap(po => po.records));
+    assert.equal(flattened.some(r => r.po_code === 'POMCMP099999'), false, 'expected orphaned PO record to be auto-removed');
+
+    const allRes = await api(server, '/api/po/all');
+    assert.equal(allRes.status, 200);
+    assert.equal(allRes.body.some(r => r.po_code === 'POMCMP099999'), false, 'expected orphaned PO record to be absent from list view too');
   } finally {
     await server.stop();
   }
