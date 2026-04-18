@@ -138,14 +138,14 @@ test('server starts against an older database schema and applies migration safel
   }
 });
 
-test('boxes table keeps boxes when different type codes reuse sequence numbers', async () => {
+test('boxes table keeps boxes when different type codes reuse sequence numbers and orders rows descending with explicit gaps', async () => {
   const server = await startServer();
   try {
     const upsert = await api(server, '/api/arrivals/bulk', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        box_codes: ['20260325DSH001', '20260325LCC001'],
+        box_codes: ['20260325DSH001', '20260325LCC001', '20260325LCC003'],
         arrival_date: '2026-03-25',
         worker_name: 'tester'
       })
@@ -156,11 +156,12 @@ test('boxes table keeps boxes when different type codes reuse sequence numbers',
     assert.equal(tableRes.status, 200);
     assert.deepEqual(tableRes.body.date_meta['20260325'].types, {
       DSH: { min: 1, max: 1, count: 1 },
-      LCC: { min: 1, max: 1, count: 1 }
+      LCC: { min: 1, max: 3, count: 2 }
     });
     const cells = Object.values(tableRes.body.table['20260325'] || {});
     const codes = cells.map(c => c.box_code).sort();
-    assert.deepEqual(codes, ['20260325DSH001', '20260325LCC001']);
+    assert.deepEqual(codes, ['20260325DSH001', '20260325LCC001', '20260325LCC002', '20260325LCC003']);
+    assert.deepEqual(tableRes.body.row_order, ['LCC:003', 'LCC:002', 'LCC:001', 'DSH:001']);
   } finally {
     await server.stop();
   }
@@ -250,6 +251,44 @@ test('editing a PO code renames the photo file and keeps database path in sync',
     assert.match(updated.photo_path, /POMCMP026993_/);
     assert.equal(fs.existsSync(oldPath), false, 'expected old filename to be gone after rename');
     assert.equal(fs.existsSync(path.join(server.uploadsDir, updated.photo_path)), true, 'expected renamed file to exist');
+  } finally {
+    await server.stop();
+  }
+});
+
+test('filesystem sync removes deleted PO files and recreates renamed files as new records', async () => {
+  const server = await startServer();
+  try {
+    const folder = path.join(server.uploadsDir, '2026-04-17', '20260325LCC021');
+    await fsp.mkdir(folder, { recursive: true });
+    const originalName = 'POMCMP026992_20260325LCC021_20260418_095818.jpg';
+    const originalPath = path.join(folder, originalName);
+    await fsp.writeFile(originalPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+    const firstSync = await api(server, '/api/po/all');
+    assert.equal(firstSync.status, 200);
+    const originalRecord = firstSync.body.find(r => r.photo_path === '2026-04-17/20260325LCC021/POMCMP026992_20260325LCC021_20260418_095818.jpg');
+    assert.ok(originalRecord, 'expected original filesystem-backed record');
+
+    await fsp.rename(originalPath, path.join(folder, 'POMCMP026993_20260325LCC099_20260418_101010.jpg'));
+
+    const secondSync = await api(server, '/api/po/all');
+    assert.equal(secondSync.status, 200);
+    const oldRecord = secondSync.body.find(r => r.id === originalRecord.id);
+    assert.equal(oldRecord, undefined, 'expected old record id to be removed after external rename');
+    const renamedRecord = secondSync.body.find(r => r.photo_path === '2026-04-17/20260325LCC021/POMCMP026993_20260325LCC099_20260418_101010.jpg');
+    assert.ok(renamedRecord, 'expected renamed file to be imported as a new record');
+    assert.equal(renamedRecord.po_code, 'POMCMP026993');
+    assert.equal(renamedRecord.box_code, '20260325LCC021');
+    assert.equal(renamedRecord.created_at, '2026-04-18 10:10:10');
+    assert.notEqual(renamedRecord.id, originalRecord.id, 'expected renamed file to receive a new record id');
+
+    await fsp.rm(path.join(folder, 'POMCMP026993_20260325LCC099_20260418_101010.jpg'));
+
+    const thirdSync = await api(server, '/api/po/all');
+    assert.equal(thirdSync.status, 200);
+    const deletedRecord = thirdSync.body.find(r => r.id === renamedRecord.id);
+    assert.equal(deletedRecord, undefined, 'expected record to be removed after image deletion');
   } finally {
     await server.stop();
   }

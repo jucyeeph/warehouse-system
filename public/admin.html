@@ -727,11 +727,13 @@ function renderTable(){
   thead+='</tr></thead>';
 
   let tbody='<tbody>';
+  let displayIndex=0;
   for(const rowKey of rows){
     const hasAny=shipment_dates.some(sd=>table[sd]&&table[sd][rowKey]);
     if(!hasAny) continue;
+    displayIndex+=1;
     const seqLabel=shipment_dates.map(sd=>table[sd]?.[rowKey]?.display_seq).find(Boolean)||String(rowKey).split(':').pop();
-    tbody+=`<tr><td class="seq-td">${seqLabel}</td>`;
+    tbody+=`<tr><td class="seq-td">${displayIndex}</td>`;
     for(const sd of shipment_dates){
       const cell=table[sd]?table[sd][rowKey]:null;
       if(!cell){ tbody+='<td class="cell-empty"></td>'; continue; }

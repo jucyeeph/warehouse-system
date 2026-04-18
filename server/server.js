@@ -375,7 +375,7 @@ function syncFilesystemState() {
         if (!seenArrivalBoxes.has(row.box_code)) db.prepare('DELETE FROM arrivals WHERE id=?').run(row.id);
       }
       for (const row of poRows) {
-        const existing = db.prepare('SELECT id FROM po_records WHERE photo_path=? OR file_hash=? ORDER BY CASE WHEN photo_path=? THEN 0 ELSE 1 END LIMIT 1').get(row.photo_path, row.file_hash, row.photo_path);
+        const existing = db.prepare('SELECT id FROM po_records WHERE photo_path=? LIMIT 1').get(row.photo_path);
         if (existing) {
           db.prepare("UPDATE po_records SET box_code=?, po_code=?, photo_path=?, file_hash=?, sync_source='filesystem', created_at=? WHERE id=?")
             .run(row.box_code, row.po_code, row.photo_path, row.file_hash, row.created_at, existing.id);
@@ -468,10 +468,10 @@ app.get('/api/boxes/table', (req, res) => {
     ORDER BY sb.box_code`).all();
 
   const buildRowKey = (typeCode, seq) => `${typeCode}:${String(seq).padStart(3,'0')}`;
-  const sortRowKeys = (a, b) => {
+  const sortRowKeysDesc = (a, b) => {
     const [typeA, seqA] = String(a).split(':');
     const [typeB, seqB] = String(b).split(':');
-    return Number(seqA) - Number(seqB) || String(typeA).localeCompare(String(typeB));
+    return Number(seqB) - Number(seqA) || String(typeB).localeCompare(String(typeA));
   };
 
   const shipped = {};
@@ -544,7 +544,7 @@ app.get('/api/boxes/table', (req, res) => {
     table[sdate] = {};
     const typeRanges = {};
     const cells = { ...(shipped[sdate] || {}), ...(arrivedOnly[sdate] || {}) };
-    const rowKeys = Object.keys(cells).sort(sortRowKeys);
+    const rowKeys = Object.keys(cells).sort(sortRowKeysDesc);
     for (const rowKey of rowKeys) {
       const c = cells[rowKey];
       table[sdate][rowKey] = c;
@@ -588,7 +588,7 @@ app.get('/api/boxes/table', (req, res) => {
     };
   }
 
-  const row_order = Array.from(globalRowKeys).sort(sortRowKeys);
+  const row_order = Array.from(globalRowKeys).sort(sortRowKeysDesc);
   res.json({ shipment_dates, global_max_seq: row_order.length, row_order, table, date_meta });
 });
 
