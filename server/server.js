@@ -480,10 +480,10 @@ app.get('/api/boxes/table', (req, res) => {
     ORDER BY sb.box_code`).all();
 
   const buildRowKey = (typeCode, seq) => `${typeCode}:${String(seq).padStart(3,'0')}`;
-  const sortRowKeys = (a, b) => {
-    const [typeA, seqA] = String(a).split(':');
-    const [typeB, seqB] = String(b).split(':');
-    return String(typeA).localeCompare(String(typeB)) || Number(seqA) - Number(seqB);
+  const compareTypeGroups = (a, b, ranges = {}) => {
+    const rangeA = ranges[a] || { min: Number.MAX_SAFE_INTEGER };
+    const rangeB = ranges[b] || { min: Number.MAX_SAFE_INTEGER };
+    return Number(rangeA.min) - Number(rangeB.min) || String(a).localeCompare(String(b));
   };
 
   const shipped = {};
@@ -551,12 +551,17 @@ app.get('/api/boxes/table', (req, res) => {
   const shipment_dates = Array.from(allDates).sort().reverse();
   const table = {};
   const date_meta = {};
+  const date_row_orders = {};
 
   for (const sdate of shipment_dates) {
     table[sdate] = {};
     const typeRanges = {};
     const cells = { ...(shipped[sdate] || {}), ...(arrivedOnly[sdate] || {}) };
-    const rowKeys = Object.keys(cells).sort(sortRowKeys);
+    const rowKeys = Object.keys(cells).sort((a, b) => {
+      const [typeA, seqA] = String(a).split(':');
+      const [typeB, seqB] = String(b).split(':');
+      return Number(seqA) - Number(seqB) || String(typeA).localeCompare(String(typeB));
+    });
     for (const rowKey of rowKeys) {
       const c = cells[rowKey];
       table[sdate][rowKey] = c;
@@ -587,12 +592,20 @@ app.get('/api/boxes/table', (req, res) => {
         globalRowKeys.add(rowKey);
       }
     }
+    const orderedTypes = Object.keys(typeRanges).sort((a, b) => compareTypeGroups(a, b, typeRanges));
+    date_row_orders[sdate] = orderedTypes.flatMap(tc => {
+      const range = typeRanges[tc];
+      const rows = [];
+      for (let s = range.min; s <= range.max; s++) rows.push(buildRowKey(tc, s));
+      return rows;
+    });
     const shipped_count = Object.values(table[sdate]).filter(c=>c.shipped).length;
     const arrived_count = Object.values(table[sdate]).filter(c=>c.arrived).length;
     date_meta[sdate] = {
       display: fmtShipDate(sdate),
       display_short: displayShipmentDate(sdate),
       types: typeRanges,
+      row_order: date_row_orders[sdate],
       max_seq: Object.values(typeRanges).reduce((max, range) => Math.max(max, range.max), 0),
       shipped_count,
       arrived_count,
@@ -600,8 +613,13 @@ app.get('/api/boxes/table', (req, res) => {
     };
   }
 
-  const row_order = Array.from(globalRowKeys).sort(sortRowKeys);
-  res.json({ shipment_dates, global_max_seq: row_order.length, row_order, table, date_meta });
+  const row_order = Array.from(globalRowKeys).sort((a, b) => {
+    const [typeA, seqA] = String(a).split(':');
+    const [typeB, seqB] = String(b).split(':');
+    return Number(seqA) - Number(seqB) || String(typeA).localeCompare(String(typeB));
+  });
+  const global_max_seq = shipment_dates.reduce((max, sdate) => Math.max(max, date_row_orders[sdate]?.length || 0), 0);
+  res.json({ shipment_dates, global_max_seq, row_order, date_row_orders, table, date_meta });
 });
 
 app.get('/api/arrivals/dates', (req, res) => {

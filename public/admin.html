@@ -715,8 +715,9 @@ function renderTable(){
     document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:40px;color:var(--muted)">暂无到货箱子记录</td></tr></tbody>';
     return;
   }
-  const {shipment_dates,row_order=[],global_max_seq,table,date_meta}=tableData;
-  const rows=row_order.length ? row_order : Array.from({length:global_max_seq},(_,i)=>String(i+1));
+  const {shipment_dates,row_order=[],global_max_seq,table,date_meta,date_row_orders={}}=tableData;
+  const maxRows=Math.max(global_max_seq||0,...shipment_dates.map(sd=>(date_row_orders[sd]||date_meta?.[sd]?.row_order||[]).length));
+  const rows=Array.from({length:maxRows},(_,i)=>i);
   let thead='<thead><tr><th class="seq-th">序</th>';
   for(const sd of shipment_dates){
     const m=date_meta[sd];
@@ -728,14 +729,18 @@ function renderTable(){
 
   let tbody='<tbody>';
   let displayIndex=0;
-  for(const rowKey of rows){
-    const hasAny=shipment_dates.some(sd=>table[sd]&&table[sd][rowKey]);
+  for(const rowIndex of rows){
+    const hasAny=shipment_dates.some(sd=>{
+      const dateRows=date_row_orders[sd]||date_meta?.[sd]?.row_order||[];
+      return Boolean(dateRows[rowIndex] && table[sd]?.[dateRows[rowIndex]]);
+    });
     if(!hasAny) continue;
     displayIndex+=1;
-    const seqLabel=shipment_dates.map(sd=>table[sd]?.[rowKey]?.display_seq).find(Boolean)||String(rowKey).split(':').pop();
     tbody+=`<tr><td class="seq-td">${displayIndex}</td>`;
     for(const sd of shipment_dates){
-      const cell=table[sd]?table[sd][rowKey]:null;
+      const dateRows=date_row_orders[sd]||date_meta?.[sd]?.row_order||[];
+      const rowKey=dateRows[rowIndex];
+      const cell=rowKey&&table[sd]?table[sd][rowKey]:null;
       if(!cell){ tbody+='<td class="cell-empty"></td>'; continue; }
       const isHl=(selArrDate&&cell.arrived&&cell.arrival_date===selArrDate)||(selShipmentDate&&selShipmentDate===sd&&(cell.shipped||cell.arrived));
       const isBsel=batchSel.has(cell.box_code);
@@ -748,7 +753,7 @@ function renderTable(){
       tbody+=`<td class="${cls}" data-code="${cell.box_code}" data-arrived="${cell.arrived}"
         data-adate="${cell.arrival_date||''}" data-shipped="${cell.shipped}"
         onclick="onCellClick('${cell.box_code}',${cell.arrived},'${cell.arrival_date||''}',event)">
-        <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${cell.display_seq||seqLabel}</div></div>
+        <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${cell.display_seq}</div></div>
       </td>`;
     }
     tbody+='</tr>';

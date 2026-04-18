@@ -138,14 +138,21 @@ test('server starts against an older database schema and applies migration safel
   }
 });
 
-test('boxes table keeps boxes when different type codes reuse sequence numbers and orders rows ascending by type with gaps inside each type only', async () => {
+test('boxes table packs each shipment date independently and keeps gaps only inside the same type range', async () => {
   const server = await startServer();
   try {
     const upsert = await api(server, '/api/arrivals/bulk', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        box_codes: ['20260325DSH001', '20260325DSH002', '20260325LCC001', '20260325LCC003'],
+        box_codes: [
+          '20260325DSH001',
+          '20260325DSH004',
+          '20260325LCC005',
+          '20260315LCC001',
+          '20260315LCC005',
+          '20260315DSH011'
+        ],
         arrival_date: '2026-03-25',
         worker_name: 'tester'
       })
@@ -155,13 +162,16 @@ test('boxes table keeps boxes when different type codes reuse sequence numbers a
     const tableRes = await api(server, '/api/boxes/table');
     assert.equal(tableRes.status, 200);
     assert.deepEqual(tableRes.body.date_meta['20260325'].types, {
-      DSH: { min: 1, max: 2, count: 2 },
-      LCC: { min: 1, max: 3, count: 2 }
+      DSH: { min: 1, max: 4, count: 2 },
+      LCC: { min: 5, max: 5, count: 1 }
     });
-    const cells = Object.values(tableRes.body.table['20260325'] || {});
-    const codes = cells.map(c => c.box_code).sort();
-    assert.deepEqual(codes, ['20260325DSH001', '20260325DSH002', '20260325LCC001', '20260325LCC002', '20260325LCC003']);
-    assert.deepEqual(tableRes.body.row_order, ['DSH:001', 'DSH:002', 'LCC:001', 'LCC:002', 'LCC:003']);
+    assert.deepEqual(tableRes.body.date_row_orders['20260325'], ['DSH:001', 'DSH:002', 'DSH:003', 'DSH:004', 'LCC:005']);
+    assert.deepEqual(tableRes.body.date_row_orders['20260315'], ['LCC:001', 'LCC:002', 'LCC:003', 'LCC:004', 'LCC:005', 'DSH:011']);
+    assert.equal(tableRes.body.global_max_seq, 6);
+    const date25Codes = tableRes.body.date_row_orders['20260325'].map(rowKey => tableRes.body.table['20260325'][rowKey].box_code);
+    const date15Codes = tableRes.body.date_row_orders['20260315'].map(rowKey => tableRes.body.table['20260315'][rowKey].box_code);
+    assert.deepEqual(date25Codes, ['20260325DSH001', '20260325DSH002', '20260325DSH003', '20260325DSH004', '20260325LCC005']);
+    assert.deepEqual(date15Codes, ['20260315LCC001', '20260315LCC002', '20260315LCC003', '20260315LCC004', '20260315LCC005', '20260315DSH011']);
   } finally {
     await server.stop();
   }
