@@ -71,6 +71,73 @@ function imageBlob(name = 'photo.jpg') {
   return new File([Buffer.from([0xff, 0xd8, 0xff, 0xd9])], name, { type: 'image/jpeg' });
 }
 
+test('server starts against an older database schema and applies migration safely', async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'warehouse-old-schema-'));
+  try {
+    const dataDir = path.join(root, 'data');
+    await fsp.mkdir(dataDir, { recursive: true });
+    const dbPath = path.join(dataDir, 'warehouse.db');
+    const bootstrap = `
+      const Database = require('better-sqlite3');
+      const db = new Database(${JSON.stringify(dbPath)});
+      db.exec(\`
+        CREATE TABLE arrivals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          box_code TEXT NOT NULL UNIQUE,
+          worker_name TEXT,
+          notes TEXT,
+          scanned_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+        );
+        CREATE TABLE po_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id INTEGER,
+          po_code TEXT NOT NULL,
+          photo_path TEXT,
+          notes TEXT,
+          created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+        );
+        CREATE TABLE error_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          box_code TEXT DEFAULT '',
+          po_code TEXT NOT NULL,
+          photo_path TEXT,
+          error_description TEXT,
+          worker_name TEXT,
+          review_status TEXT DEFAULT 'pending',
+          review_notes TEXT,
+          reviewed_by TEXT,
+          reviewed_at TEXT,
+          linked_group TEXT,
+          created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+        );
+      \`);
+    `;
+    const prep = spawn(process.execPath, ['-e', bootstrap], { cwd: path.resolve(__dirname, '..') });
+    await once(prep, 'exit');
+
+    const port = 5200 + Math.floor(Math.random() * 500);
+    const child = spawn(process.execPath, [SERVER_PATH], {
+      cwd: path.resolve(__dirname, '..'),
+      env: {
+        ...process.env,
+        PORT: String(port),
+        DB_PATH: dbPath,
+        UPLOADS_DIR: path.join(dataDir, 'uploads'),
+        PUBLIC_DIR: path.resolve(__dirname, '..', '..', 'public')
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let logs = '';
+    child.stdout.on('data', c => { logs += c.toString(); });
+    child.stderr.on('data', c => { logs += c.toString(); });
+    await waitForServer(port, child, () => logs);
+    child.kill('SIGTERM');
+    await once(child, 'exit').catch(() => {});
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('boxes table keeps boxes when different type codes reuse sequence numbers', async () => {
   const server = await startServer();
   try {

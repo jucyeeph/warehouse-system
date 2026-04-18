@@ -139,11 +139,7 @@ db.exec(`
     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_arrivals_box  ON arrivals(box_code);
-  CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date);
-  CREATE INDEX IF NOT EXISTS idx_po_box        ON po_records(box_code);
   CREATE INDEX IF NOT EXISTS idx_po_code       ON po_records(po_code);
-  CREATE INDEX IF NOT EXISTS idx_po_photo      ON po_records(photo_path);
-  CREATE INDEX IF NOT EXISTS idx_po_hash       ON po_records(file_hash);
   CREATE INDEX IF NOT EXISTS idx_err_po        ON error_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_status    ON error_records(review_status);
   CREATE INDEX IF NOT EXISTS idx_ship_box      ON shipment_boxes(box_code);
@@ -157,6 +153,12 @@ db.exec(`
   "ALTER TABLE po_records ADD COLUMN box_code TEXT NOT NULL DEFAULT ''",
   'ALTER TABLE po_records ADD COLUMN file_hash TEXT',
   "ALTER TABLE po_records ADD COLUMN sync_source TEXT NOT NULL DEFAULT 'manual'"
+].forEach(sql => { try { db.exec(sql); } catch {} });
+[
+  'CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date)',
+  'CREATE INDEX IF NOT EXISTS idx_po_box ON po_records(box_code)',
+  'CREATE INDEX IF NOT EXISTS idx_po_photo ON po_records(photo_path)',
+  'CREATE INDEX IF NOT EXISTS idx_po_hash ON po_records(file_hash)'
 ].forEach(sql => { try { db.exec(sql); } catch {} });
 
 function sanitizeCodeSegment(value, fallback='unknown') {
