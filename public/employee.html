@@ -408,7 +408,7 @@ const scanState = {
   cameras:[], currentCameraId:'', starting:false, sourceKey:''
 };
 
-const APP_VERSION = 'v12 trial · 2026-04-11 · a8ba68f';
+const APP_VERSION = 'v12.1-trial · 2026-04-18 · nasa';
 
 let boxLocked = false, lockedBoxCode = '';
 let rPoRows = [], rNextId = 1;
@@ -447,6 +447,8 @@ function goNav() {
 }
 
 function todayStr() { return new Date().toLocaleDateString('sv-SE'); }
+function normalizePoCode(code){ const s=String(code||'').trim().toUpperCase(); return /^POMCMP\d{6}$/.test(s)?s:''; }
+function requireValidPoCode(code){ const normalized=normalizePoCode(code); if(!normalized){ toast('采购单号必须是 POMCMP + 6位数字','err'); return ''; } return normalized; }
 function ensureAudioContext() {
   if (!window.AudioContext && !window.webkitAudioContext) return null;
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -962,6 +964,7 @@ async function submitUnboxing() {
     const r=rPoRows[i];
     if (!r.po_code.trim()&&!r.file) continue;
     if (!r.po_code.trim()) { toast(`PO #${i+1} missing barcode`,'err'); return; }
+    if (!requireValidPoCode(r.po_code)) return;
     if (!r.file) { toast(`PO #${i+1} missing photo`,'err'); return; }
   }
   const btn=document.getElementById('r-submit-unbox');
@@ -972,7 +975,7 @@ async function submitUnboxing() {
     for (const row of toSubmit) {
       const fd=new FormData();
       fd.append('session_id',session_id); fd.append('box_code',lockedBoxCode);
-      fd.append('po_code',row.po_code.trim()); fd.append('photo',row.file);
+      fd.append('po_code',normalizePoCode(row.po_code)); fd.append('photo',row.file);
       try{ const r2=await postForm('/api/unboxing/po',fd); r2.success?ok++:fail++; }catch{fail++;}
     }
     if (!fail) { toast(`✅ Submitted ${ok} PO(s)`,'ok'); unlockBox(); }
@@ -1032,6 +1035,7 @@ async function submitPcPos(){
     const r=pcPoRows[i];
     if(!r.po_code.trim()&&!r.file) continue;
     if(!r.po_code.trim()){toast(`PO #${i+1} missing barcode`,'err');return;}
+    if(!requireValidPoCode(r.po_code)) return;
     if(!r.file){toast(`PO #${i+1} missing photo`,'err');return;}
   }
   const btn=document.getElementById('pc-submit-btn');
@@ -1040,7 +1044,7 @@ async function submitPcPos(){
     let ok=0,fail=0;
     for(const row of toSubmit){
       const fd=new FormData();
-      fd.append('po_code',row.po_code.trim());
+      fd.append('po_code',normalizePoCode(row.po_code));
       fd.append('arrival_date',aDate);
       fd.append('worker_name',pcName);
       fd.append('photo',row.file);
@@ -1073,9 +1077,11 @@ async function submitError(){
   const poCode=document.getElementById('pc-err-po').value.trim();
   const desc=document.getElementById('pc-err-desc').value.trim();
   if(!poCode){toast('Please enter PO barcode','err');return;}
+  const normalizedPo=requireValidPoCode(poCode);
+  if(!normalizedPo) return;
   if(!errPhotoFile){toast('Please take a photo','err');return;}
   const fd=new FormData();
-  fd.append('po_code',poCode); fd.append('error_description',desc);
+  fd.append('po_code',normalizedPo); fd.append('error_description',desc);
   fd.append('worker_name',pcName); fd.append('photo',errPhotoFile);
   try{
     const r=await postForm('/api/error',fd);

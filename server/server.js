@@ -3,13 +3,14 @@ const Database = require('better-sqlite3');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const cors = require('cors');
 const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || './data/warehouse.db';
-const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/uploads';
+const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/updates';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || '/public';
 
 if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -75,6 +76,7 @@ db.exec(`
     notes TEXT,
     arrival_date TEXT,
     unboxed_at TEXT,
+    sync_source TEXT NOT NULL DEFAULT 'manual',
     scanned_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
   );
   CREATE TABLE IF NOT EXISTS unboxing_sessions (
@@ -89,7 +91,9 @@ db.exec(`
     box_code TEXT NOT NULL DEFAULT '',
     po_code TEXT NOT NULL,
     photo_path TEXT,
+    file_hash TEXT,
     notes TEXT,
+    sync_source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
   );
   CREATE TABLE IF NOT EXISTS error_records (
@@ -138,6 +142,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_box        ON po_records(box_code);
   CREATE INDEX IF NOT EXISTS idx_po_code       ON po_records(po_code);
+  CREATE INDEX IF NOT EXISTS idx_po_photo      ON po_records(photo_path);
+  CREATE INDEX IF NOT EXISTS idx_po_hash       ON po_records(file_hash);
   CREATE INDEX IF NOT EXISTS idx_err_po        ON error_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_status    ON error_records(review_status);
   CREATE INDEX IF NOT EXISTS idx_ship_box      ON shipment_boxes(box_code);
@@ -146,8 +152,11 @@ db.exec(`
 [
   'ALTER TABLE arrivals ADD COLUMN arrival_date TEXT',
   'ALTER TABLE arrivals ADD COLUMN unboxed_at TEXT',
+  "ALTER TABLE arrivals ADD COLUMN sync_source TEXT NOT NULL DEFAULT 'manual'",
   'ALTER TABLE error_records ADD COLUMN linked_po_record_id INTEGER',
   "ALTER TABLE po_records ADD COLUMN box_code TEXT NOT NULL DEFAULT ''",
+  'ALTER TABLE po_records ADD COLUMN file_hash TEXT',
+  "ALTER TABLE po_records ADD COLUMN sync_source TEXT NOT NULL DEFAULT 'manual'"
 ].forEach(sql => { try { db.exec(sql); } catch {} });
 
 function sanitizeCodeSegment(value, fallback='unknown') {
@@ -163,9 +172,21 @@ function normalizeArrivalDate(input) {
   if (/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
   return null;
 }
+function normalizePoCode(input) {
+  const code = String(input || '').trim().toUpperCase();
+  return /^POMCMP\d{6}$/.test(code) ? code : null;
+}
+function assertValidPoCode(input) {
+  const code = normalizePoCode(input);
+  if (!code) throw new Error('采购单号格式错误，必须是 POMCMP + 6位数字');
+  return code;
+}
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+function relUploadPath(absPath) {
+  return path.relative(UPLOADS_DIR, absPath).split(path.sep).join('/');
 }
 function ensureArrivalUploadDir(boxCode, arrivalDate) {
   const safeBox = sanitizeCodeSegment(boxCode, 'unknown_box');
@@ -178,8 +199,65 @@ function getArrivalFolderMeta(boxCode, arrivalDate) {
   const rawDate = sanitizeCodeSegment(normalizedArrivalDate || arrivalDate, 'unknown');
   return { rawBox, rawDate, normalizedArrivalDate };
 }
+function buildPhotoStamp(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function stampToCreatedAt(stamp) {
+  const m = String(stamp || '').match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+}
+function createdAtToStamp(createdAt) {
+  const m = String(createdAt || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  return `${m[1]}${m[2]}${m[3]}_${m[4]}${m[5]}${m[6]}`;
+}
+function parsePoPhotoFilename(filename) {
+  const ext = path.extname(filename || '');
+  const basename = path.basename(filename || '', ext);
+  const m = basename.match(/^([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_(\d{8}_\d{6})$/);
+  if (!m) return null;
+  const po_code = normalizePoCode(m[1]);
+  if (!po_code) return null;
+  return {
+    po_code,
+    box_code: m[2],
+    stamp: m[3],
+    created_at: stampToCreatedAt(m[3]),
+    ext: ext || '.jpg'
+  };
+}
+function computeFileHash(absPath) {
+  return crypto.createHash('sha1').update(fs.readFileSync(absPath)).digest('hex');
+}
+function getPhotoPath(req) {
+  if (!req.file) return null;
+  const rel = req._photoRelDir || '';
+  return rel ? `${rel}/${req.file.filename}` : req.file.filename;
+}
+function getPhotoAbsolutePath(photoPath) {
+  return photoPath ? path.join(UPLOADS_DIR, photoPath) : null;
+}
+function getCreatedAtForPhotoPath(photoPath) {
+  return parsePoPhotoFilename(path.basename(photoPath || ''))?.created_at || null;
+}
+function renamePoPhotoFile(photoPath, poCode, boxCode, createdAt) {
+  if (!photoPath) return photoPath;
+  const absPath = getPhotoAbsolutePath(photoPath);
+  if (!fs.existsSync(absPath)) return photoPath;
+  const parsed = parsePoPhotoFilename(path.basename(photoPath)) || {};
+  const stamp = createdAtToStamp(createdAt) || parsed.stamp || buildPhotoStamp();
+  const ext = path.extname(absPath) || parsed.ext || '.jpg';
+  const nextName = `${sanitizeCodeSegment(poCode)}_${sanitizeCodeSegment(boxCode || parsed.box_code, 'unknown_box')}_${stamp}${ext}`;
+  const nextAbs = path.join(path.dirname(absPath), nextName);
+  if (nextAbs === absPath) return photoPath;
+  fs.renameSync(absPath, nextAbs);
+  return relUploadPath(nextAbs);
+}
 function resolvePoUploadMeta(req, { allowArrivalDateFallback=false } = {}) {
-  const rawPo = sanitizeCodeSegment(req.body.po_code, 'unknown');
+  const rawPo = sanitizeCodeSegment(assertValidPoCode(req.body.po_code), 'unknown');
   const rawBox = sanitizeCodeSegment(req.body.box_code, 'unknown_box');
   const ext = path.extname(req.file?.originalname || req.body.originalname || '').toLowerCase() || '.jpg';
   const arrival = rawBox !== 'unknown_box'
@@ -220,14 +298,8 @@ function resolvePoUploadMeta(req, { allowArrivalDateFallback=false } = {}) {
     filename: `${rawPo}_${unknownBox}_${buildPhotoStamp()}${ext}`
   };
 }
-function buildPhotoStamp() {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
 function resolveLegacyPhotoMeta(req, { preferArrivalDate=false } = {}) {
-  const rawPo = sanitizeCodeSegment(req.body.po_code, 'unknown');
+  const rawPo = sanitizeCodeSegment(assertValidPoCode(req.body.po_code), 'unknown');
   const rawBox = sanitizeCodeSegment(req.body.box_code, preferArrivalDate ? 'no_box' : 'unknown_box');
   let root = rawBox;
   if (preferArrivalDate && (!req.body.box_code || rawBox === 'no_box')) {
@@ -235,18 +307,114 @@ function resolveLegacyPhotoMeta(req, { preferArrivalDate=false } = {}) {
   }
   return { rawPo, rawBox, root };
 }
-
+function savePoRecord({ session_id=null, box_code='', po_code, photo_path=null, notes=null, created_at=null, sync_source='filesystem' }) {
+  const normalizedPo = assertValidPoCode(po_code);
+  const resolvedCreatedAt = created_at || getCreatedAtForPhotoPath(photo_path) || null;
+  const absPath = getPhotoAbsolutePath(photo_path);
+  const fileHash = absPath && fs.existsSync(absPath) ? computeFileHash(absPath) : null;
+  const stmt = resolvedCreatedAt
+    ? db.prepare('INSERT INTO po_records (session_id,box_code,po_code,photo_path,file_hash,notes,sync_source,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    : db.prepare('INSERT INTO po_records (session_id,box_code,po_code,photo_path,file_hash,notes,sync_source) VALUES(?,?,?,?,?,?,?)');
+  const result = resolvedCreatedAt
+    ? stmt.run(session_id||null, box_code||'', normalizedPo, photo_path, fileHash, notes||null, sync_source, resolvedCreatedAt)
+    : stmt.run(session_id||null, box_code||'', normalizedPo, photo_path, fileHash, notes||null, sync_source);
+  return { id: result.lastInsertRowid, po_code: normalizedPo, photo_path, file_hash: fileHash, created_at: resolvedCreatedAt };
+}
+let filesystemSyncRunning = false;
+function syncFilesystemState() {
+  if (filesystemSyncRunning) return;
+  filesystemSyncRunning = true;
+  try {
+    ensureDir(UPLOADS_DIR);
+    const seenArrivalBoxes = new Set();
+    const seenPoIds = new Set();
+    const arrivalRows = [];
+    const poRows = [];
+    for (const dateDir of fs.readdirSync(UPLOADS_DIR, { withFileTypes: true })) {
+      if (!dateDir.isDirectory()) continue;
+      const arrivalDate = normalizeArrivalDate(dateDir.name);
+      if (!arrivalDate) continue;
+      const datePath = path.join(UPLOADS_DIR, dateDir.name);
+      for (const boxDir of fs.readdirSync(datePath, { withFileTypes: true })) {
+        if (!boxDir.isDirectory()) continue;
+        const boxCode = String(boxDir.name || '').trim();
+        if (!boxCode) continue;
+        seenArrivalBoxes.add(boxCode);
+        arrivalRows.push({ box_code: boxCode, arrival_date: arrivalDate });
+        const boxPath = path.join(datePath, boxDir.name);
+        for (const file of fs.readdirSync(boxPath, { withFileTypes: true })) {
+          if (!file.isFile()) continue;
+          if (!/\.(jpg|jpeg|png|webp)$/i.test(file.name)) continue;
+          const parsed = parsePoPhotoFilename(file.name);
+          if (!parsed) continue;
+          const absPath = path.join(boxPath, file.name);
+          const relPath = relUploadPath(absPath);
+          poRows.push({
+            po_code: parsed.po_code,
+            box_code: boxCode,
+            photo_path: relPath,
+            created_at: parsed.created_at,
+            file_hash: computeFileHash(absPath)
+          });
+        }
+      }
+    }
+    db.transaction(() => {
+      for (const row of arrivalRows) {
+        const existing = db.prepare('SELECT id FROM arrivals WHERE box_code=?').get(row.box_code);
+        if (existing) {
+          db.prepare("UPDATE arrivals SET arrival_date=?, sync_source='filesystem' WHERE id=?").run(row.arrival_date, existing.id);
+        } else {
+          db.prepare("INSERT INTO arrivals (box_code,worker_name,arrival_date,sync_source) VALUES(?,?,?,?)").run(row.box_code, '文件同步', row.arrival_date, 'filesystem');
+        }
+      }
+      const fsArrivalRows = db.prepare("SELECT id, box_code FROM arrivals WHERE sync_source='filesystem'").all();
+      for (const row of fsArrivalRows) {
+        if (!seenArrivalBoxes.has(row.box_code)) db.prepare('DELETE FROM arrivals WHERE id=?').run(row.id);
+      }
+      for (const row of poRows) {
+        const existing = db.prepare('SELECT id FROM po_records WHERE photo_path=? OR file_hash=? ORDER BY CASE WHEN photo_path=? THEN 0 ELSE 1 END LIMIT 1').get(row.photo_path, row.file_hash, row.photo_path);
+        if (existing) {
+          db.prepare("UPDATE po_records SET box_code=?, po_code=?, photo_path=?, file_hash=?, sync_source='filesystem', created_at=? WHERE id=?")
+            .run(row.box_code, row.po_code, row.photo_path, row.file_hash, row.created_at, existing.id);
+          seenPoIds.add(existing.id);
+        } else {
+          const r = db.prepare("INSERT INTO po_records (box_code,po_code,photo_path,file_hash,sync_source,created_at) VALUES(?,?,?,?,?,?)")
+            .run(row.box_code, row.po_code, row.photo_path, row.file_hash, 'filesystem', row.created_at);
+          seenPoIds.add(r.lastInsertRowid);
+        }
+      }
+      const fsPoRows = db.prepare("SELECT id FROM po_records WHERE sync_source='filesystem'").all();
+      for (const row of fsPoRows) {
+        if (!seenPoIds.has(row.id)) {
+          db.prepare('UPDATE error_records SET linked_po_record_id=NULL WHERE linked_po_record_id=?').run(row.id);
+          db.prepare('DELETE FROM po_records WHERE id=?').run(row.id);
+        }
+      }
+    })();
+  } finally {
+    filesystemSyncRunning = false;
+  }
+}
 const poUploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     req.file = file;
-    const meta = resolvePoUploadMeta(req);
-    req._photoRelDir = meta.relDir;
-    req._photoMeta = meta;
-    cb(null, meta.absDir);
+    try {
+      const meta = resolvePoUploadMeta(req);
+      req._photoRelDir = meta.relDir;
+      req._photoMeta = meta;
+      cb(null, meta.absDir);
+    } catch (err) {
+      cb(err);
+    }
   },
   filename: (req, file, cb) => {
-    const meta = req._photoMeta || resolvePoUploadMeta(req);
-    cb(null, meta.filename);
+    try {
+      const meta = req._photoMeta || resolvePoUploadMeta(req);
+      cb(null, meta.filename);
+    } catch (err) {
+      cb(err);
+    }
   }
 });
 const poUpload = multer({ storage: poUploadStorage, limits: { fileSize: 30*1024*1024 },
@@ -254,29 +422,31 @@ const poUpload = multer({ storage: poUploadStorage, limits: { fileSize: 30*1024*
 });
 const errorUploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const meta = resolveLegacyPhotoMeta(req);
-    const dir = path.join(UPLOADS_DIR, meta.root, meta.rawPo);
-    ensureDir(dir);
-    req._photoRelDir = `${meta.root}/${meta.rawPo}`;
-    req._photoMeta = meta;
-    cb(null, dir);
+    try {
+      const meta = resolveLegacyPhotoMeta(req);
+      const dir = path.join(UPLOADS_DIR, meta.root, meta.rawPo);
+      ensureDir(dir);
+      req._photoRelDir = `${meta.root}/${meta.rawPo}`;
+      req._photoMeta = meta;
+      cb(null, dir);
+    } catch (err) {
+      cb(err);
+    }
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
-    const meta = req._photoMeta || resolveLegacyPhotoMeta(req);
-    cb(null, `${meta.rawPo}_${meta.rawBox}_${buildPhotoStamp()}${ext}`);
+    try {
+      const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+      const meta = req._photoMeta || resolveLegacyPhotoMeta(req);
+      cb(null, `${meta.rawPo}_${meta.rawBox}_${buildPhotoStamp()}${ext}`);
+    } catch (err) {
+      cb(err);
+    }
   }
 });
 const errorUpload = multer({ storage: errorUploadStorage, limits: { fileSize: 30*1024*1024 },
   fileFilter: (req, file, cb) => { file.mimetype.startsWith('image/') ? cb(null,true) : cb(new Error('Images only')); }
 });
 const xlsUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10*1024*1024 } });
-
-function getPhotoPath(req) {
-  if (!req.file) return null;
-  const rel = req._photoRelDir || '';
-  return rel ? `${rel}/${req.file.filename}` : req.file.filename;
-}
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
@@ -288,23 +458,34 @@ app.get('/api/health', (req,res) => res.json({ status:'ok' }));
 // BOX TABLE + ARRIVAL DATES
 // ════════════════════════════════════════
 app.get('/api/boxes/table', (req, res) => {
+  syncFilesystemState();
   const arrivals = db.prepare('SELECT * FROM arrivals ORDER BY box_code').all();
   const shippedRows = db.prepare(`SELECT sb.*, b.revoked_at FROM shipment_boxes sb
     JOIN shipment_batches b ON b.id=sb.batch_id
     WHERE b.revoked_at IS NULL
     ORDER BY sb.box_code`).all();
 
-  const shipped = {}; // sdate -> seq -> shipment cell
-  const arrivedOnly = {}; // sdate -> seq -> arrival cell with no shipment record
+  const buildRowKey = (typeCode, seq) => `${typeCode}:${String(seq).padStart(3,'0')}`;
+  const sortRowKeys = (a, b) => {
+    const [typeA, seqA] = String(a).split(':');
+    const [typeB, seqB] = String(b).split(':');
+    return Number(seqA) - Number(seqB) || String(typeA).localeCompare(String(typeB));
+  };
+
+  const shipped = {};
+  const arrivedOnly = {};
   const allDates = new Set();
-  let global_max_seq = 0;
+  const globalRowKeys = new Set();
 
   for (const s of shippedRows) {
     const p = parseBoxCode(s.box_code);
     if (!p) continue;
+    const rowKey = buildRowKey(s.type_code || p.type, p.seq);
     allDates.add(p.date);
     if (!shipped[p.date]) shipped[p.date] = {};
-    shipped[p.date][p.seq] = {
+    shipped[p.date][rowKey] = {
+      row_key: rowKey,
+      display_seq: String(p.seq).padStart(3,'0'),
       type_code: s.type_code,
       shipped: true,
       arrived: false,
@@ -315,17 +496,18 @@ app.get('/api/boxes/table', (req, res) => {
       arrival_id: null,
       source: 'shipment'
     };
-    global_max_seq = Math.max(global_max_seq, p.seq);
+    globalRowKeys.add(rowKey);
   }
 
   for (const a of arrivals) {
     const p = parseBoxCode(a.box_code);
     if (!p) continue;
+    const rowKey = buildRowKey(p.type, p.seq);
     allDates.add(p.date);
-    global_max_seq = Math.max(global_max_seq, p.seq);
-    if (shipped[p.date]?.[p.seq]) {
-      shipped[p.date][p.seq] = {
-        ...shipped[p.date][p.seq],
+    globalRowKeys.add(rowKey);
+    if (shipped[p.date]?.[rowKey]) {
+      shipped[p.date][rowKey] = {
+        ...shipped[p.date][rowKey],
         arrived: true,
         arrival_date: a.arrival_date,
         arrival_id: a.id,
@@ -334,7 +516,9 @@ app.get('/api/boxes/table', (req, res) => {
       };
     } else {
       if (!arrivedOnly[p.date]) arrivedOnly[p.date] = {};
-      arrivedOnly[p.date][p.seq] = {
+      arrivedOnly[p.date][rowKey] = {
+        row_key: rowKey,
+        display_seq: String(p.seq).padStart(3,'0'),
         type_code: p.type,
         shipped: false,
         arrived: true,
@@ -357,22 +541,24 @@ app.get('/api/boxes/table', (req, res) => {
   for (const sdate of shipment_dates) {
     table[sdate] = {};
     const typeRanges = {};
-    const seqTypeMap = {};
     const cells = { ...(shipped[sdate] || {}), ...(arrivedOnly[sdate] || {}) };
-    const seqs = Object.keys(cells).map(Number).sort((a,b)=>a-b);
-    for (const seq of seqs) {
-      const c = cells[seq];
-      table[sdate][seq] = c;
+    const rowKeys = Object.keys(cells).sort(sortRowKeys);
+    for (const rowKey of rowKeys) {
+      const c = cells[rowKey];
+      table[sdate][rowKey] = c;
+      const seq = parseInt(c.display_seq, 10);
       if (!typeRanges[c.type_code]) typeRanges[c.type_code] = { min: seq, max: seq, count: 0 };
       typeRanges[c.type_code].min = Math.min(typeRanges[c.type_code].min, seq);
       typeRanges[c.type_code].max = Math.max(typeRanges[c.type_code].max, seq);
       typeRanges[c.type_code].count += 1;
-      seqTypeMap[seq] = c.type_code;
     }
     for (const [tc, range] of Object.entries(typeRanges)) {
       for (let s = range.min; s <= range.max; s++) {
-        if (!table[sdate][s]) {
-          table[sdate][s] = {
+        const rowKey = buildRowKey(tc, s);
+        if (!table[sdate][rowKey]) {
+          table[sdate][rowKey] = {
+            row_key: rowKey,
+            display_seq: String(s).padStart(3,'0'),
             type_code: tc,
             shipped: false,
             arrived: false,
@@ -384,6 +570,7 @@ app.get('/api/boxes/table', (req, res) => {
             source: 'gap'
           };
         }
+        globalRowKeys.add(rowKey);
       }
     }
     const shipped_count = Object.values(table[sdate]).filter(c=>c.shipped).length;
@@ -392,17 +579,19 @@ app.get('/api/boxes/table', (req, res) => {
       display: fmtShipDate(sdate),
       display_short: displayShipmentDate(sdate),
       types: typeRanges,
-      max_seq: seqs.length ? Math.max(...Object.keys(table[sdate]).map(Number)) : 0,
+      max_seq: Object.values(typeRanges).reduce((max, range) => Math.max(max, range.max), 0),
       shipped_count,
       arrived_count,
       remaining_count: Math.max(shipped_count - Object.values(table[sdate]).filter(c=>c.shipped && c.arrived).length, 0)
     };
   }
 
-  res.json({ shipment_dates, global_max_seq, table, date_meta });
+  const row_order = Array.from(globalRowKeys).sort(sortRowKeys);
+  res.json({ shipment_dates, global_max_seq: row_order.length, row_order, table, date_meta });
 });
 
 app.get('/api/arrivals/dates', (req, res) => {
+  syncFilesystemState();
   const rows = db.prepare(`SELECT COALESCE(arrival_date, date(scanned_at)) as adate, box_code FROM arrivals ORDER BY adate DESC`).all();
   const byDate = {};
   for (const r of rows) {
@@ -569,20 +758,26 @@ app.post('/api/unboxing/session', (req, res) => {
   res.json({ success:true, session_id:r.lastInsertRowid });
 });
 app.post('/api/unboxing/po', poUpload.single('photo'), (req, res) => {
-  const { session_id, box_code, po_code, notes } = req.body;
-  if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
-  const photo_path = getPhotoPath(req);
-  const r = db.prepare('INSERT INTO po_records (session_id,box_code,po_code,photo_path,notes) VALUES(?,?,?,?,?)')
-    .run(session_id||null, box_code||'', po_code, photo_path, notes||null);
-  res.json({ success:true, id:r.lastInsertRowid });
+  try {
+    const { session_id, box_code, po_code, notes } = req.body;
+    if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
+    const photo_path = getPhotoPath(req);
+    const saved = savePoRecord({ session_id, box_code, po_code, photo_path, notes, sync_source: 'filesystem' });
+    res.json({ success:true, id:saved.id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 app.post('/api/po-record/manual', poUpload.single('photo'), (req, res) => {
-  const { po_code, notes, box_code } = req.body;
-  if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
-  const photo_path = getPhotoPath(req);
-  const r = db.prepare('INSERT INTO po_records (box_code,po_code,photo_path,notes) VALUES(?,?,?,?)')
-    .run(box_code?.trim()||'', po_code.trim(), photo_path, notes||null);
-  res.json({ success:true, id:r.lastInsertRowid });
+  try {
+    const { po_code, notes, box_code } = req.body;
+    if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
+    const photo_path = getPhotoPath(req);
+    const saved = savePoRecord({ box_code: box_code?.trim()||'', po_code, photo_path, notes, sync_source: 'filesystem' });
+    res.json({ success:true, id:saved.id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // PC operator upload: keeps date-based fallback when box_code is unknown
@@ -604,17 +799,33 @@ const pcUpload = multer({ storage: pcUploadStorage, limits: { fileSize: 30*1024*
 });
 
 app.post('/api/po-record/pc', pcUpload.single('photo'), (req, res) => {
-  const { po_code, arrival_date, notes } = req.body;
-  if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
-  const photo_path = req.file ? `${req._photoRelDir}/${req.file.filename}` : null;
-  const r = db.prepare("INSERT INTO po_records (box_code,po_code,photo_path,notes) VALUES('',?,?,?)")
-    .run(po_code.trim(), photo_path, notes||null);
-  res.json({ success:true, id:r.lastInsertRowid });
+  try {
+    const { po_code, notes } = req.body;
+    if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
+    const photo_path = req.file ? `${req._photoRelDir}/${req.file.filename}` : null;
+    const saved = savePoRecord({ box_code: '', po_code, photo_path, notes, sync_source: 'filesystem' });
+    res.json({ success:true, id:saved.id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 app.put('/api/po-record/:id', (req, res) => {
-  const { notes, po_code } = req.body;
-  db.prepare('UPDATE po_records SET notes=?, po_code=COALESCE(?,po_code) WHERE id=?').run(notes||null, po_code||null, req.params.id);
-  res.json({ success:true });
+  try {
+    const current = db.prepare('SELECT * FROM po_records WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: '未找到采购单记录' });
+    const nextPo = req.body.po_code ? assertValidPoCode(req.body.po_code) : current.po_code;
+    const nextPhotoPath = nextPo !== current.po_code
+      ? renamePoPhotoFile(current.photo_path, nextPo, current.box_code, current.created_at)
+      : current.photo_path;
+    const absPath = getPhotoAbsolutePath(nextPhotoPath);
+    const fileHash = absPath && fs.existsSync(absPath) ? computeFileHash(absPath) : current.file_hash || null;
+    db.prepare('UPDATE po_records SET notes=?, po_code=?, photo_path=?, file_hash=? WHERE id=?')
+      .run(req.body.notes||null, nextPo, nextPhotoPath, fileHash, req.params.id);
+    db.prepare('UPDATE error_records SET po_code=? WHERE linked_po_record_id=?').run(nextPo, req.params.id);
+    res.json({ success:true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 app.delete('/api/po-record/:id', (req, res) => {
   const rec = db.prepare('SELECT photo_path FROM po_records WHERE id=?').get(req.params.id);
@@ -626,6 +837,7 @@ app.delete('/api/po-record/:id', (req, res) => {
   res.json({ success:true });
 });
 app.get('/api/po/all', (req, res) => {
+  syncFilesystemState();
   const { sort='created_at', dir='DESC', search='' } = req.query;
   const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
   const col = validSort[sort]||'pr.created_at', d = dir==='ASC'?'ASC':'DESC';
@@ -638,6 +850,7 @@ app.get('/api/po/all', (req, res) => {
   res.json(db.prepare(sql).all(...p));
 });
 app.get('/api/po/overview', (req, res) => {
+  syncFilesystemState();
   const search = String(req.query.search || '').trim();
   let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.photo_path, pr.notes, pr.created_at,
     COALESCE(a.arrival_date, date(pr.created_at)) as group_arrival_date,
@@ -669,12 +882,16 @@ app.get('/api/po/overview', (req, res) => {
 // ERRORS
 // ════════════════════════════════════════
 app.post('/api/error', errorUpload.single('photo'), (req, res) => {
-  const { po_code, error_description, worker_name } = req.body;
-  if (!po_code) return res.status(400).json({ error: '缺少采购单码' });
-  const photo_path = getPhotoPath(req);
-  const r = db.prepare('INSERT INTO error_records (po_code,photo_path,error_description,worker_name) VALUES(?,?,?,?)')
-    .run(po_code, photo_path, error_description||null, worker_name||'未知');
-  res.json({ success:true, id:r.lastInsertRowid });
+  try {
+    const { po_code, error_description, worker_name } = req.body;
+    const normalizedPo = assertValidPoCode(po_code);
+    const photo_path = getPhotoPath(req);
+    const r = db.prepare('INSERT INTO error_records (po_code,photo_path,error_description,worker_name) VALUES(?,?,?,?)')
+      .run(normalizedPo, photo_path, error_description||null, worker_name||'未知');
+    res.json({ success:true, id:r.lastInsertRowid });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 app.get('/api/errors', (req, res) => {
   const { status, date_from, date_to, po_code } = req.query;
@@ -706,9 +923,14 @@ app.put('/api/errors/:id/review', (req, res) => {
   res.json({ success:true });
 });
 app.put('/api/errors/:id/edit', (req, res) => {
-  db.prepare('UPDATE error_records SET po_code=COALESCE(?,po_code), error_description=? WHERE id=?')
-    .run(req.body.po_code||null, req.body.error_description||null, req.params.id);
-  res.json({ success:true });
+  try {
+    const nextPo = req.body.po_code ? assertValidPoCode(req.body.po_code) : null;
+    db.prepare('UPDATE error_records SET po_code=COALESCE(?,po_code), error_description=? WHERE id=?')
+      .run(nextPo, req.body.error_description||null, req.params.id);
+    res.json({ success:true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 app.put('/api/errors/:id/link-po', (req, res) => {
   db.prepare('UPDATE error_records SET linked_po_record_id=? WHERE id=?').run(req.body.po_record_id||null, req.params.id);
@@ -727,6 +949,7 @@ app.delete('/api/errors/:id', (req, res) => {
 // BOX / PO FINDER
 // ════════════════════════════════════════
 app.get('/api/box/:code', (req, res) => {
+  syncFilesystemState();
   const code = req.params.code;
   const arrival = db.prepare('SELECT * FROM arrivals WHERE box_code=? LIMIT 1').get(code);
   const po_records = db.prepare(`SELECT pr.*,(SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count FROM po_records pr WHERE pr.box_code=? ORDER BY pr.created_at`).all(code);
@@ -905,6 +1128,12 @@ app.post('/api/db/import', xlsUpload.single('file'), (req, res) => {
 
     res.json({ success:true, results });
   } catch(e) { res.status(400).json({ error:e.message }); }
+});
+
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  const status = /采购单号格式错误/.test(err.message || '') ? 400 : 500;
+  res.status(status).json({ error: err.message || '服务器错误' });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`[仓库系统] 端口 ${PORT}`));

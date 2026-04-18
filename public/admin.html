@@ -715,7 +715,8 @@ function renderTable(){
     document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:40px;color:var(--muted)">暂无到货箱子记录</td></tr></tbody>';
     return;
   }
-  const {shipment_dates,global_max_seq,table,date_meta}=tableData;
+  const {shipment_dates,row_order=[],global_max_seq,table,date_meta}=tableData;
+  const rows=row_order.length ? row_order : Array.from({length:global_max_seq},(_,i)=>String(i+1));
   let thead='<thead><tr><th class="seq-th">序</th>';
   for(const sd of shipment_dates){
     const m=date_meta[sd];
@@ -726,13 +727,13 @@ function renderTable(){
   thead+='</tr></thead>';
 
   let tbody='<tbody>';
-  for(let seq=1;seq<=global_max_seq;seq++){
-    // Check if any column has this seq
-    const hasAny=shipment_dates.some(sd=>table[sd]&&table[sd][seq]);
+  for(const rowKey of rows){
+    const hasAny=shipment_dates.some(sd=>table[sd]&&table[sd][rowKey]);
     if(!hasAny) continue;
-    tbody+=`<tr><td class="seq-td">${seq}</td>`;
+    const seqLabel=shipment_dates.map(sd=>table[sd]?.[rowKey]?.display_seq).find(Boolean)||String(rowKey).split(':').pop();
+    tbody+=`<tr><td class="seq-td">${seqLabel}</td>`;
     for(const sd of shipment_dates){
-      const cell=table[sd]?table[sd][seq]:null;
+      const cell=table[sd]?table[sd][rowKey]:null;
       if(!cell){ tbody+='<td class="cell-empty"></td>'; continue; }
       const isHl=(selArrDate&&cell.arrived&&cell.arrival_date===selArrDate)||(selShipmentDate&&selShipmentDate===sd&&(cell.shipped||cell.arrived));
       const isBsel=batchSel.has(cell.box_code);
@@ -742,11 +743,10 @@ function renderTable(){
       else if(!cell.shipped&&cell.arrived) cls='cell-arrived';
       if(isHl) cls='cell-hl';
       if(isBsel) cls='cell-batch-sel';
-      const seqPad=String(seq).padStart(3,'0');
       tbody+=`<td class="${cls}" data-code="${cell.box_code}" data-arrived="${cell.arrived}"
         data-adate="${cell.arrival_date||''}" data-shipped="${cell.shipped}"
         onclick="onCellClick('${cell.box_code}',${cell.arrived},'${cell.arrival_date||''}',event)">
-        <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${seqPad}</div></div>
+        <div class="cell-in"><div class="ct">${cell.type_code}</div><div class="cs">${cell.display_seq||seqLabel}</div></div>
       </td>`;
     }
     tbody+='</tr>';
@@ -1207,9 +1207,10 @@ function selectPoRecord(idx){
       <span class="lk">错误订单</span><span>${r.error_count>0?`<span class="badge b-e">已关联 ${r.error_count} 条</span>`:'无'}</span>
     </div>`;
 }
+function normalizePoCode(code){ const s=String(code||'').trim().toUpperCase(); return /^POMCMP\d{6}$/.test(s)?s:''; }
 function showMpoModal(){ mpoPhotoFile=null; ['mpo-code','mpo-box','mpo-notes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('mpo-ph-prev').style.display='none'; document.getElementById('mpo-ph-ph').style.display='flex'; document.getElementById('mpo-modal').classList.add('show'); setTimeout(()=>document.getElementById('mpo-code').focus(),100); }
 function onMpoPhoto(inp){ if(!inp.files[0])return; mpoPhotoFile=inp.files[0]; const fr=new FileReader(); fr.onload=e=>{document.getElementById('mpo-ph-prev').src=e.target.result;document.getElementById('mpo-ph-prev').style.display='block';document.getElementById('mpo-ph-ph').style.display='none';}; fr.readAsDataURL(inp.files[0]); }
-async function submitMpo(){ const code=document.getElementById('mpo-code').value.trim(); const box=document.getElementById('mpo-box').value.trim(); const notes=document.getElementById('mpo-notes').value.trim(); if(!code){toast('请输入采购单号','err');return;} if(!mpoPhotoFile){toast('请选择照片','err');return;} const fd=new FormData(); fd.append('po_code',code); fd.append('notes',notes); if(box) fd.append('box_code',box); fd.append('photo',mpoPhotoFile); try{ const r=await fetch('/api/po-record/manual',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){toast(`✅ ${code} 已补录`,'ok');document.getElementById('mpo-modal').classList.remove('show');loadPoAll();}else toast('❌ '+(r.error||'失败'),'err'); }catch{toast('❌ 网络错误','err');} }
+async function submitMpo(){ const code=document.getElementById('mpo-code').value.trim(); const box=document.getElementById('mpo-box').value.trim(); const notes=document.getElementById('mpo-notes').value.trim(); if(!code){toast('请输入采购单号','err');return;} const normalized=normalizePoCode(code); if(!normalized){toast('采购单号必须是 POMCMP + 6位数字','err');return;} if(!mpoPhotoFile){toast('请选择照片','err');return;} const fd=new FormData(); fd.append('po_code',normalized); fd.append('notes',notes); if(box) fd.append('box_code',box); fd.append('photo',mpoPhotoFile); try{ const r=await fetch('/api/po-record/manual',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){toast(`✅ ${normalized} 已补录`,'ok');document.getElementById('mpo-modal').classList.remove('show');loadPoAll();}else toast('❌ '+(r.error||'失败'),'err'); }catch{toast('❌ 网络错误','err');} }
 
 // ════════════════════════════
 // IMPORT
