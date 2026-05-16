@@ -20,7 +20,7 @@ warehouse-system/
 
 ---
 
-## 部署到群晖 NAS（单台）
+## 部署方案 A：生产端 / 群晖 NAS（单台）
 
 ### 前提
 - 群晖 NAS 已安装 **Container Manager**（DSM 7.2+）
@@ -60,6 +60,91 @@ sudo docker compose logs -f
 - 管理电脑：`http://NAS的IP:3000/admin.html`
 
 > 查找 NAS IP 地址：群晖控制面板 → 网络 → 网络界面
+
+---
+
+## 部署方案 B：个人 NAS 测试端（192.168.31.89）
+
+用途：把当前项目部署到你另一台个人 NAS 上，作为**测试端**使用。  
+这样测试环境和生产环境同样都是 NAS Docker，更接近真实运行状态，但测试数据独立存放，不影响生产端。
+
+### 目标环境
+
+- 测试 NAS：`192.168.31.89`
+- SSH 账号：`openclawtest`
+- NAS 项目目录：`/volume1/docker/ddq-warehouse-system-test`
+- 测试端口：`3010`
+- 容器名：`warehouse-system-test`
+- 测试数据目录：`/volume1/docker/ddq-warehouse-system-test/data-test`
+
+### 访问地址
+
+部署完成后访问：
+
+- 测试端入口：`http://192.168.31.89:3010`
+- 员工端：`http://192.168.31.89:3010/employee.html`
+- 管理端：`http://192.168.31.89:3010/admin.html`
+- 健康检查：`http://192.168.31.89:3010/api/health`
+
+### 和生产端的区别
+
+- 生产端使用：`docker-compose.yml`，通常端口 `3000`，数据目录 `data/`
+- 测试端使用：`docker-compose.test-nas.yml`，端口 `3010`，数据目录 `data-test/`
+- 测试端不会连接生产端 `data/`，不会写入生产数据库和生产上传目录
+- 测试端适合先验收页面、扫码流程、上传目录结构，再决定是否同步到生产端
+
+### 部署测试端
+
+在本地项目目录执行：
+
+```bash
+cd /Users/ddqph/Documents/gitee/ddq-warehouse-system-branch
+NAS_PASSWORD='你的NAS密码' ./scripts/deploy-nas-test.sh
+```
+
+脚本会做这些事：
+
+1. 打包当前项目代码
+2. 上传到 NAS 的 `/tmp/ddq-warehouse-system-test.tar.gz`
+3. 解压到 `/volume1/docker/ddq-warehouse-system-test`
+4. 保留 NAS 上已有的 `data-test/` 测试数据
+5. 使用 `docker-compose.test-nas.yml` 重新构建并启动测试容器
+   - 这个测试端会复用个人 NAS 上已有的 `warehouse-nasb-warehouse-admin:latest` 镜像作为基础镜像，只覆盖最新 `server.js`，避免每次在 NAS 上重新编译 `better-sqlite3`
+6. 检查 `http://192.168.31.89:3010/api/health`
+
+### 查看状态 / 日志
+
+```bash
+ssh openclawtest@192.168.31.89
+cd /volume1/docker/ddq-warehouse-system-test
+/usr/local/bin/docker-compose -f docker-compose.test-nas.yml ps
+/usr/local/bin/docker-compose -f docker-compose.test-nas.yml logs --tail=80 -f
+```
+
+如果 Docker 需要 sudo，就在 NAS 上改用：
+
+```bash
+sudo /usr/local/bin/docker-compose -f docker-compose.test-nas.yml ps
+sudo /usr/local/bin/docker-compose -f docker-compose.test-nas.yml logs --tail=80 -f
+```
+
+### 停止测试端
+
+```bash
+cd /Users/ddqph/Documents/gitee/ddq-warehouse-system-branch
+NAS_PASSWORD='你的NAS密码' ./scripts/stop-nas-test.sh
+```
+
+### 清空测试数据（谨慎）
+
+只在你想重新开始测试时使用。这个命令只删除测试端 `data-test/`，不碰生产端：
+
+```bash
+ssh openclawtest@192.168.31.89
+cd /volume1/docker/ddq-warehouse-system-test
+/usr/local/bin/docker-compose -f docker-compose.test-nas.yml down
+rm -rf data-test
+```
 
 ---
 

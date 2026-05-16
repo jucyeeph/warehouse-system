@@ -247,6 +247,7 @@ input[type=date].inp{-webkit-appearance:none}
               <button class="scan-btn" onclick="openScan('r-ub-box', onBoxScan, 'box')">📷</button>
             </div>
             <div class="flow-tip" id="r-ub-box-tip"><strong>Next:</strong> scan box code first, then keep this box fixed while you add PO photos.</div>
+            <button class="btn btn-ghost btn-sm" onclick="chooseArrivedBoxForUnboxing()" style="margin-top:10px">Box code cannot be scanned — choose arrived box</button>
           </div>
           <div id="r-ub-locked" style="display:none">
             <div class="locked-box">
@@ -302,8 +303,9 @@ input[type=date].inp{-webkit-appearance:none}
         </p>
 
         <div class="fg">
-          <label class="lbl">Arrival Date</label>
-          <input type="date" class="inp" id="pc-up-date" style="width:100%">
+          <label class="lbl">Arrival Date (choose an existing date only)</label>
+          <select class="inp" id="pc-up-date" style="width:100%"><option value="">Loading arrival dates…</option></select>
+          <div style="font-size:12px;color:var(--muted);margin-top:6px">PC uploads must be saved under "Arrival Date / No box code". Unknown is not allowed.</div>
         </div>
 
         <hr class="divider">
@@ -410,11 +412,13 @@ const scanState = {
 
 const APP_VERSION = 'v12 trial · 2026-04-11 · a8ba68f';
 
-let boxLocked = false, lockedBoxCode = '';
+let boxLocked = false, lockedBoxCode = '', selectedBoxCode = '', noBoxUploadMode = false, noBoxUploadDate = '';
 let rPoRows = [], rNextId = 1;
 
 let pcPoRows = [], pcNextId = 1;
+let pcArrivalDates = [];
 let errPhotoFile = null;
+const NO_PO_REASONS = ['Factory did not include PO paper','Accessory box','Hand count','Damaged PO paper','PO barcode unreadable','Other'];
 
 // ════════════════════════════
 // NAVIGATION
@@ -437,7 +441,7 @@ function enterRole(role) {
     showScreen('pc-screen');
     updateWorkerChip('pc');
     if (!pcName) showNameModal('pc');
-    document.getElementById('pc-up-date').value = todayStr();
+    loadPcArrivalDates();
   }
 }
 
@@ -447,6 +451,21 @@ function goNav() {
 }
 
 function todayStr() { return new Date().toLocaleDateString('sv-SE'); }
+function normalizePoCode(v){ return String(v||'').trim().toUpperCase(); }
+function isValidPoCode(v){ return /^POMCMP\d{6}$/.test(normalizePoCode(v)); }
+function looksLikePoCode(v){ return /^POMCMP/i.test(String(v||'').trim()); }
+function isValidBoxCode(v){ return /^\d{8}[A-Za-z0-9]+\d{3}$/.test(String(v||'').trim()); }
+function validateBoxInput(code){
+  if(!code) return 'Please scan or type the box code first.';
+  if(looksLikePoCode(code)) return 'You scanned a PO code, not a box code. Please scan the box QR code.';
+  if(!isValidBoxCode(code)) return 'Invalid box code format. Please rescan or contact the supervisor.';
+  return '';
+}
+function validatePoInput(code){
+  if(!isValidPoCode(code)) return 'Invalid PO code. Please rescan or type it manually. Format: POMCMP + 6 digits.';
+  return '';
+}
+function escapeHtml(v){ return String(v||'').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
 function ensureAudioContext() {
   if (!window.AudioContext && !window.webkitAudioContext) return null;
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -856,9 +875,10 @@ function onArrivalScan(code) {
 
 async function submitArrival() {
   if (!receiverName) { showNameModal('r'); return; }
-  const boxCode = document.getElementById('r-arr-box').value.trim();
+  const boxCode = document.getElementById('r-arr-box').value.trim().toUpperCase();
   const aDate   = document.getElementById('r-arr-date').value;
-  if (!boxCode) { toast('Please scan or enter box code','err'); return; }
+  const boxErr = validateBoxInput(boxCode);
+  if (boxErr) { toast(boxErr,'err'); return; }
   try {
     const r = await post('/api/arrival', { box_code:boxCode, worker_name:receiverName, arrival_date:aDate });
     if (r.success) {
@@ -866,7 +886,7 @@ async function submitArrival() {
       document.getElementById('r-arr-box').value='';
       document.getElementById('r-arr-box').classList.remove('ok');
       loadArrivalHistory();
-    } else if (r.error==='该箱码已记录到货') {
+    } else if (r.error==='This box code has already been recorded') {
       toast(`⚠️ Already recorded at ${r.scanned_at}`,'err');
     } else toast('❌ '+(r.error||'Error'),'err');
   } catch { toast('❌ Network error','err'); }
@@ -889,33 +909,81 @@ async function loadArrivalHistory() {
 // RECEIVER: UNBOXING
 // ════════════════════════════════════════
 function onBoxScan(code) {
-  document.getElementById('r-ub-box').value = code;
-  lockBox(code);
+  const clean = String(code||'').trim().toUpperCase();
+  document.getElementById('r-ub-box').value = clean;
+  const boxErr = validateBoxInput(clean);
+  if (boxErr) { toast(boxErr,'err'); return; }
+  lockBox(clean);
   playScanSuccess('box');
-  toast('✅ Box locked: '+code,'ok');
+  toast('✅ Box locked: '+clean,'ok');
 }
 function tryLockBox() {
-  const val = document.getElementById('r-ub-box').value.trim();
-  if (val && !boxLocked) lockBox(val);
+  const val = document.getElementById('r-ub-box').value.trim().toUpperCase();
+  if (!val || boxLocked) return;
+  const boxErr = validateBoxInput(val);
+  if (boxErr) { toast(boxErr,'err'); return; }
+  lockBox(val);
 }
-function lockBox(code) {
-  boxLocked=true; lockedBoxCode=code;
+function lockBox(code, opts={}) {
+  boxLocked=true; lockedBoxCode=String(code||'').trim().toUpperCase();
+  selectedBoxCode = opts.selected ? lockedBoxCode : '';
+  noBoxUploadMode = false; noBoxUploadDate = '';
   document.getElementById('r-ub-unlocked').style.display='none';
   document.getElementById('r-ub-locked').style.display='block';
-  document.getElementById('r-ub-locked-code').textContent=code;
+  document.getElementById('r-ub-locked-code').textContent=opts.selected ? `${lockedBoxCode} (selected arrived box)` : lockedBoxCode;
+  if (!rPoRows.length) addPoRow();
+}
+function lockNoBoxUpload(arrivalDate) {
+  boxLocked=true; lockedBoxCode='NOBOXCODE'; selectedBoxCode='';
+  noBoxUploadMode = true; noBoxUploadDate = arrivalDate;
+  document.getElementById('r-ub-unlocked').style.display='none';
+  document.getElementById('r-ub-locked').style.display='block';
+  document.getElementById('r-ub-locked-code').textContent=`No box code (${arrivalDate})`;
   if (!rPoRows.length) addPoRow();
 }
 function unlockBox() {
-  boxLocked=false; lockedBoxCode='';
+  boxLocked=false; lockedBoxCode=''; selectedBoxCode=''; noBoxUploadMode=false; noBoxUploadDate='';
   document.getElementById('r-ub-box').value='';
   document.getElementById('r-ub-unlocked').style.display='block';
   document.getElementById('r-ub-locked').style.display='none';
   rPoRows=[]; rNextId=1; renderPoRows();
 }
 
+async function chooseArrivedBoxForUnboxing() {
+  let list = pcArrivalDates;
+  if (!list.length) {
+    try { list = await fetch('/api/arrivals/dates').then(r=>r.json()); } catch { list = []; }
+  }
+  const dates = Array.isArray(list) ? list.map(x=>x.arrival_date).filter(Boolean) : [];
+  const pickedDate = prompt(`Box code cannot be scanned. Choose an arrival date:\n${dates.slice(0,10).join('\n')}`, dates[0] || todayStr());
+  if (!pickedDate) return;
+  let boxes = [];
+  try { boxes = await fetch('/api/arrivals/boxes?arrival_date='+encodeURIComponent(pickedDate.trim())).then(r=>r.json()); } catch {}
+  if (!Array.isArray(boxes) || !boxes.length) {
+    lockNoBoxUpload(pickedDate.trim());
+    toast('✅ No arrived box selected. Photos will be saved to No box code.','ok');
+    return;
+  }
+  const preferred = boxes.filter(b => !b.po_count);
+  const choices = (preferred.length ? preferred : boxes).slice(0,30);
+  const pickedBox = prompt(`Use selected arrived box. Copy/type one box code:\n${choices.map(b=>`${b.box_code}${b.po_count ? ' ('+b.po_count+' PO)' : ''}`).join('\n')}\n\nIf you cannot identify the box, type: NO BOX`, choices[0].box_code);
+  if (!pickedBox) return;
+  const raw = pickedBox.trim();
+  if (/^NO\s*BOX$/i.test(raw) || /^NOBOXCODE$/i.test(raw)) {
+    lockNoBoxUpload(pickedDate.trim());
+    toast('✅ No box code selected. Photos will be saved to No box code.','ok');
+    return;
+  }
+  const clean = raw.toUpperCase();
+  const boxErr = validateBoxInput(clean);
+  if (boxErr) { toast(boxErr,'err'); return; }
+  lockBox(clean, { selected:true });
+  toast('✅ Selected arrived box: '+clean,'ok');
+}
+
 function addPoRow() {
   if (!boxLocked) { toast('Please lock a box code first','err'); return; }
-  rPoRows.push({ id:rNextId++, po_code:'', file:null, url:null });
+  rPoRows.push({ id:rNextId++, po_code:'', no_po_reason:'', file:null, url:null });
   renderPoRows();
 }
 function removePoRow(id) {
@@ -925,7 +993,8 @@ function removePoRow(id) {
   rPoRows = rPoRows.filter(x=>x.id!==id);
   renderPoRows();
 }
-function updateRowCode(id, val) { const r=rPoRows.find(x=>x.id===id); if(r) r.po_code=val; }
+function updateRowCode(id, val) { const r=rPoRows.find(x=>x.id===id); if(r) r.po_code=normalizePoCode(val); }
+function updateRowNoPoReason(id, val) { const r=rPoRows.find(x=>x.id===id); if(r) r.no_po_reason=val; }
 function onRowPhoto(id, inp) {
   if (!inp.files[0]) return;
   const r = rPoRows.find(x=>x.id===id); if(!r) return;
@@ -936,44 +1005,99 @@ function onRowPhoto(id, inp) {
 function renderPoRows() {
   const el = document.getElementById('r-po-rows');
   if (!rPoRows.length) { el.innerHTML='<div class="empty-hint">No PO added yet</div>'; return; }
+  const reasonOptions = (selected)=>'<option value="">If there is no PO code, select a reason</option>' + NO_PO_REASONS.map(x=>`<option value="${escapeHtml(x)}" ${selected===x?'selected':''}>${escapeHtml(x)}</option>`).join('');
   el.innerHTML = rPoRows.map((row,idx)=>`
     <div class="po-row-card">
       <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">PO #${idx+1}</div>
       <div class="pr-top">
-        <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
-          oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po', 'r-po-row-${row.id}')">📷</button>
+        <input class="inp" value="${escapeHtml(row.po_code)}" placeholder="POMCMP030456"
+          oninput="updateRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px;text-transform:uppercase">
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=rPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=normalizePoCode(code);renderPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+normalizePoCode(code),'ok'); }, 'po', 'r-po-row-${row.id}')">📷</button>
         <button class="pr-del" onclick="removePoRow(${row.id})">✕</button>
       </div>
+      <select class="inp" style="width:100%;height:40px;margin-bottom:10px" onchange="updateRowNoPoReason(${row.id},this.value)">
+        ${reasonOptions(row.no_po_reason||'')}
+      </select>
+      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin:-4px 0 10px">Normal PO must be POMCMP + 6 digits. If there is no PO paper, leave PO blank and select a reason. Photo will be saved as a NOPO evidence file.</div>
       <input type="file" id="ph-${row.id}" accept="image/*" capture="environment"
         style="display:none" onchange="onRowPhoto(${row.id},this)">
       ${row.url
         ? `<img src="${row.url}" class="photo-thumb" onclick="document.getElementById('ph-${row.id}').click()">`
-        : `<div class="photo-ph" onclick="document.getElementById('ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO</div></div>`}
+        : `<div class="photo-ph" onclick="document.getElementById('ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO / hand-count evidence</div></div>`}
     </div>`).join('');
+}
+
+async function chooseArrivalDateForMissingBox(boxCode) {
+  let list = pcArrivalDates;
+  if (!list.length) {
+    try { list = await fetch('/api/arrivals/dates').then(r=>r.json()); } catch { list = []; }
+  }
+  const values = Array.isArray(list) ? list.map(x=>x.arrival_date).filter(Boolean) : [];
+  const hint = values.length ? `Available arrival dates:\n${values.slice(0,8).join('\n')}` : 'No existing arrival date found. You may enter today date.';
+  const picked = prompt(`Box ${boxCode} has no arrival record. Copy/type an arrival date:\n${hint}`, values[0] || todayStr());
+  if (!picked) return null;
+  return picked.trim();
+}
+async function getArrivalDateIfMissing(boxCode) {
+  try {
+    const info = await fetch('/api/box/'+encodeURIComponent(boxCode)).then(r=>r.json());
+    if (info.arrival?.arrival_date) return '';
+  } catch {}
+  return chooseArrivalDateForMissingBox(boxCode);
 }
 
 async function submitUnboxing() {
   if (!receiverName) { showNameModal('r'); return; }
   if (!boxLocked||!lockedBoxCode) { toast('Please scan a box code first','err'); return; }
-  const toSubmit = rPoRows.filter(r=>r.po_code.trim()&&r.file);
-  if (!toSubmit.length) { toast('Please add at least one PO with photo','err'); return; }
+  if (!noBoxUploadMode) {
+    const boxErr = validateBoxInput(lockedBoxCode);
+    if (boxErr) { toast(boxErr,'err'); return; }
+  }
+  const toSubmit = rPoRows.filter(r=>(r.po_code.trim()||r.no_po_reason)&&r.file);
+  if (!toSubmit.length) { toast('Please add at least one PO or hand-count photo.','err'); return; }
   for (let i=0;i<rPoRows.length;i++) {
     const r=rPoRows[i];
-    if (!r.po_code.trim()&&!r.file) continue;
-    if (!r.po_code.trim()) { toast(`PO #${i+1} missing barcode`,'err'); return; }
+    if (!r.po_code.trim()&&!r.file&&!r.no_po_reason) continue;
+    if (r.po_code.trim()) {
+      const poErr = validatePoInput(r.po_code);
+      if (poErr) { toast(`PO #${i+1} ${poErr}`,'err'); return; }
+    } else if (!r.no_po_reason) { toast(`PO #${i+1} has no PO code. Please select a reason.`,'err'); return; }
     if (!r.file) { toast(`PO #${i+1} missing photo`,'err'); return; }
   }
   const btn=document.getElementById('r-submit-unbox');
   btn.disabled=true; btn.textContent='Submitting…';
   try {
-    const {session_id}=await post('/api/unboxing/session',{box_code:lockedBoxCode,worker_name:receiverName});
+    let session_id=null, missingArrivalDate='';
+    if (!noBoxUploadMode) {
+      missingArrivalDate = await getArrivalDateIfMissing(lockedBoxCode);
+      if (missingArrivalDate === '') {
+        // existing arrival is OK
+      } else if (!missingArrivalDate) { toast('No arrival date selected. Upload cancelled.','err'); return; }
+      const sessionPayload = {box_code:lockedBoxCode,worker_name:receiverName};
+      if (missingArrivalDate) sessionPayload.arrival_date = missingArrivalDate;
+      const sess=await post('/api/unboxing/session',sessionPayload);
+      if(!sess.success){ toast('❌ '+(sess.error||'Unboxing session failed'),'err'); return; }
+      session_id=sess.session_id;
+    }
     let ok=0,fail=0;
     for (const row of toSubmit) {
       const fd=new FormData();
-      fd.append('session_id',session_id); fd.append('box_code',lockedBoxCode);
-      fd.append('po_code',row.po_code.trim()); fd.append('photo',row.file);
-      try{ const r2=await postForm('/api/unboxing/po',fd); r2.success?ok++:fail++; }catch{fail++;}
+      if (noBoxUploadMode) {
+        fd.append('arrival_date', noBoxUploadDate);
+      } else {
+        fd.append('session_id',session_id);
+        if (selectedBoxCode) fd.append('selected_box_code', selectedBoxCode);
+        else fd.append('box_code',lockedBoxCode);
+        if (missingArrivalDate) fd.append('arrival_date', missingArrivalDate);
+      }
+      if (row.po_code.trim()) fd.append('po_code',normalizePoCode(row.po_code));
+      if (row.no_po_reason) fd.append('no_po_reason',row.no_po_reason);
+      fd.append('worker_name',receiverName);
+      fd.append('photo',row.file);
+      try{
+        const endpoint = noBoxUploadMode ? '/api/po-record/pc' : '/api/unboxing/po';
+        const r2=await postForm(endpoint,fd); r2.success?ok++:fail++;
+      }catch{fail++;}
     }
     if (!fail) { toast(`✅ Submitted ${ok} PO(s)`,'ok'); unlockBox(); }
     else toast(`⚠️ ${fail} upload(s) failed`,'err');
@@ -985,7 +1109,7 @@ async function submitUnboxing() {
 // PC OPERATOR: PO UPLOAD
 // ════════════════════════════════════════
 function addPcPoRow() {
-  pcPoRows.push({ id:pcNextId++, po_code:'', file:null, url:null });
+  pcPoRows.push({ id:pcNextId++, po_code:'', no_po_reason:'', file:null, url:null });
   renderPcPoRows();
 }
 function removePcPoRow(id) {
@@ -994,7 +1118,21 @@ function removePcPoRow(id) {
   pcPoRows=pcPoRows.filter(x=>x.id!==id);
   renderPcPoRows();
 }
-function updatePcRowCode(id,val){ const r=pcPoRows.find(x=>x.id===id); if(r) r.po_code=val; }
+async function loadPcArrivalDates(){
+  const sel=document.getElementById('pc-up-date');
+  sel.innerHTML='<option value="">Loading arrival dates…</option>';
+  try{
+    pcArrivalDates=await fetch('/api/arrivals/dates').then(r=>r.json());
+    if(!Array.isArray(pcArrivalDates)||!pcArrivalDates.length){
+      sel.innerHTML='<option value="">No arrival dates yet. Please do Arrival Scan first.</option>';
+      return;
+    }
+    sel.innerHTML='<option value="">Select arrival date</option>'+pcArrivalDates.map(d=>`<option value="${escapeHtml(d.arrival_date)}">${escapeHtml(d.arrival_date)} · ${d.count||0} boxes</option>`).join('');
+    sel.value=pcArrivalDates[0].arrival_date;
+  }catch{ sel.innerHTML='<option value="">Failed to load arrival dates</option>'; }
+}
+function updatePcRowCode(id,val){ const r=pcPoRows.find(x=>x.id===id); if(r) r.po_code=normalizePoCode(val); }
+function updatePcRowNoPoReason(id,val){ const r=pcPoRows.find(x=>x.id===id); if(r) r.no_po_reason=val; }
 function onPcRowPhoto(id,inp){
   if (!inp.files[0]) return;
   const r=pcPoRows.find(x=>x.id===id); if(!r) return;
@@ -1004,21 +1142,26 @@ function onPcRowPhoto(id,inp){
 }
 function renderPcPoRows(){
   const el=document.getElementById('pc-po-rows');
-  if(!pcPoRows.length){el.innerHTML='<div class="empty-hint">Tap "+ Add PO" to add a purchase order</div>';return;}
+  if(!pcPoRows.length){el.innerHTML='<div class="empty-hint">Tap "+ Add PO" to add a purchase order or NOPO evidence</div>';return;}
+  const reasonOptions = (selected)=>'<option value="">If there is no PO code, select a reason</option>' + NO_PO_REASONS.map(x=>`<option value="${escapeHtml(x)}" ${selected===x?'selected':''}>${escapeHtml(x)}</option>`).join('');
   el.innerHTML=pcPoRows.map((row,idx)=>`
     <div class="po-row-card">
       <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">PO #${idx+1}</div>
       <div class="pr-top">
-        <input class="inp" value="${row.po_code.replace(/"/g,'&quot;')}" placeholder="PO Barcode"
-          oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px">
-        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=code;renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+code,'ok'); }, 'po', 'pc-po-row-${row.id}')">📷</button>
+        <input class="inp" value="${escapeHtml(row.po_code)}" placeholder="POMCMP030456 or leave blank for NOPO"
+          oninput="updatePcRowCode(${row.id},this.value)" style="flex:1;height:42px;font-size:14px;text-transform:uppercase">
+        <button class="pr-scan" onclick="openScan('dummy',code=>{ const r=pcPoRows.find(x=>x.id===${row.id}); if(r){r.po_code=normalizePoCode(code);renderPcPoRows();} playScanSuccess('po'); toast('✅ PO scanned: '+normalizePoCode(code),'ok'); }, 'po', 'pc-po-row-${row.id}')">📷</button>
         <button class="pr-del" onclick="removePcPoRow(${row.id})">✕</button>
       </div>
+      <select class="inp" style="width:100%;height:40px;margin-bottom:10px" onchange="updatePcRowNoPoReason(${row.id},this.value)">
+        ${reasonOptions(row.no_po_reason||'')}
+      </select>
+      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin:-4px 0 10px">If both box code and PO code cannot be scanned, select a reason. The file will be saved as NOPO_NOBOXCODE under the selected arrival date.</div>
       <input type="file" id="pc-ph-${row.id}" accept="image/*"
         style="display:none" onchange="onPcRowPhoto(${row.id},this)">
       ${row.url
         ?`<img src="${row.url}" class="photo-thumb" onclick="document.getElementById('pc-ph-${row.id}').click()">`
-        :`<div class="photo-ph" onclick="document.getElementById('pc-ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO</div></div>`}
+        :`<div class="photo-ph" onclick="document.getElementById('pc-ph-${row.id}').click()"><div class="pico">📸</div><div>Tap to photograph PO / NOPO evidence</div></div>`}
     </div>`).join('');
 }
 
@@ -1026,12 +1169,15 @@ async function submitPcPos(){
   if(!pcName){showNameModal('pc');return;}
   const aDate=document.getElementById('pc-up-date').value;
   if(!aDate){toast('Please select arrival date','err');return;}
-  const toSubmit=pcPoRows.filter(r=>r.po_code.trim()&&r.file);
-  if(!toSubmit.length){toast('Please add at least one PO with photo','err');return;}
+  const toSubmit=pcPoRows.filter(r=>(r.po_code.trim()||r.no_po_reason)&&r.file);
+  if(!toSubmit.length){toast('Please add at least one PO or NOPO evidence photo','err');return;}
   for(let i=0;i<pcPoRows.length;i++){
     const r=pcPoRows[i];
-    if(!r.po_code.trim()&&!r.file) continue;
-    if(!r.po_code.trim()){toast(`PO #${i+1} missing barcode`,'err');return;}
+    if(!r.po_code.trim()&&!r.file&&!r.no_po_reason) continue;
+    if(r.po_code.trim()) {
+      const poErr = validatePoInput(r.po_code);
+      if(poErr){toast(`PO #${i+1} ${poErr}`,'err');return;}
+    } else if(!r.no_po_reason){toast(`PO #${i+1} has no PO code. Please select a reason.`,'err');return;}
     if(!r.file){toast(`PO #${i+1} missing photo`,'err');return;}
   }
   const btn=document.getElementById('pc-submit-btn');
@@ -1040,7 +1186,8 @@ async function submitPcPos(){
     let ok=0,fail=0;
     for(const row of toSubmit){
       const fd=new FormData();
-      fd.append('po_code',row.po_code.trim());
+      if (row.po_code.trim()) fd.append('po_code',normalizePoCode(row.po_code));
+      if (row.no_po_reason) fd.append('no_po_reason',row.no_po_reason);
       fd.append('arrival_date',aDate);
       fd.append('worker_name',pcName);
       fd.append('photo',row.file);
@@ -1070,9 +1217,10 @@ function onErrPhoto(inp){
 }
 async function submitError(){
   if(!pcName){showNameModal('pc');return;}
-  const poCode=document.getElementById('pc-err-po').value.trim();
+  const poCode=normalizePoCode(document.getElementById('pc-err-po').value);
   const desc=document.getElementById('pc-err-desc').value.trim();
-  if(!poCode){toast('Please enter PO barcode','err');return;}
+  const poErr = validatePoInput(poCode);
+  if(poErr){toast(poErr,'err');return;}
   if(!errPhotoFile){toast('Please take a photo','err');return;}
   const fd=new FormData();
   fd.append('po_code',poCode); fd.append('error_description',desc);
