@@ -1,0 +1,11 @@
+# NAS 测试端快速构建镜像
+# 说明：个人 NAS 192.168.31.89 上已有 warehouse-nasb-warehouse-admin:latest 镜像，
+# 里面已经装好 Node 依赖和 better-sqlite3，测试端只覆盖最新 server.js，避免每次在 NAS 上重新 apk/npm 编译。
+
+FROM warehouse-nasb-warehouse-admin:latest
+
+WORKDIR /app
+COPY server.js .
+
+EXPOSE 3000
+CMD ["node", "server.js"]

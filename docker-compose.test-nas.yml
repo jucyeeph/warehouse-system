@@ -1,0 +1,34 @@
+version: '3.8'
+
+# 部署 B：个人 NAS 测试端
+# 目标 NAS：192.168.31.89
+# 访问地址：http://192.168.31.89:3010
+# 数据目录：./data-test（独立测试数据，不影响生产端 ./data）
+
+services:
+  warehouse-test:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.nas-test
+    container_name: warehouse-system-test
+    restart: unless-stopped
+    ports:
+      # NAS 3010 -> 容器 3000，避开生产端 3000/3001
+      - "3010:3000"
+    volumes:
+      # 测试端独立数据目录
+      - ./data-test:/data
+      # 前端静态文件
+      - ./public:/public:ro
+    environment:
+      - PORT=3000
+      - DB_PATH=/data/warehouse.db
+      - UPLOADS_DIR=/data/uploads
+      - PUBLIC_DIR=/public
+      - TZ=Asia/Shanghai
+      - NODE_ENV=test
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
