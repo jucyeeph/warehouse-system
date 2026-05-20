@@ -32,6 +32,16 @@ async function postJson(url, body) {
   return { status: r.status, body: await r.json() };
 }
 
+async function getJson(url) {
+  const r = await fetch(`http://127.0.0.1:${PORT}${url}`);
+  return { status: r.status, body: await r.json() };
+}
+
+async function deleteJson(url) {
+  const r = await fetch(`http://127.0.0.1:${PORT}${url}`, { method: 'DELETE' });
+  return { status: r.status, body: await r.json() };
+}
+
 async function postPhoto(url, fields) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.append(k, v);
@@ -144,4 +154,63 @@ test('unboxing can use a selected arrived box when the box code is unreadable du
   assert.equal(r.body.success, true);
   assertNoUnknownUploads();
   assert.match(listUploads().join('\n'), /^2026-05-15\/20260501DSH040\/POMCMP030460_20260501DSH040_/m);
+});
+
+test('shipment batch can be revoked and re-submitted with the same box codes', async () => {
+  const payload = { shipment_date: '2026-05-21', total_count: 2, items: [{ type_code: 'DSH', count: 2 }], operator: 'tester' };
+  const first = await postJson('/api/shipments/batch', payload);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.success, true);
+
+  const revoked = await deleteJson(`/api/shipments/batches/${first.body.batch_id}`);
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.body.success, true);
+
+  const second = await postJson('/api/shipments/batch', payload);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.success, true);
+
+  const overview = await getJson('/api/shipments/overview');
+  const day = overview.body.find(d => d.shipment_date === '20260521');
+  assert.equal(day.total, 2);
+  assert.deepEqual(day.boxes.map(b => b.box_code), ['20260521DSH001', '20260521DSH002']);
+
+  const table = await getJson('/api/boxes/table');
+  assert.equal(table.body.date_meta['20260521'].shipped_count, 2);
+});
+
+test('shipment batch rejects duplicate box codes while an active batch exists', async () => {
+  const payload = { shipment_date: '2026-05-22', total_count: 1, items: [{ type_code: 'DSH', count: 1 }], operator: 'tester' };
+  const first = await postJson('/api/shipments/batch', payload);
+  assert.equal(first.status, 200);
+
+  const duplicate = await postJson('/api/shipments/batch', payload);
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.body.error, /未撤回|箱号已存在/);
+});
+
+test('shipment segments preserve split supplier order in overview and table metadata', async () => {
+  const payload = {
+    shipment_date: '2026-05-23',
+    total_count: 30,
+    items: [
+      { type_code: 'DSH', count: 26 },
+      { type_code: 'LCC', count: 3 },
+      { type_code: 'DSH', count: 1 }
+    ],
+    operator: 'tester'
+  };
+  const r = await postJson('/api/shipments/batch', payload);
+  assert.equal(r.status, 200);
+
+  const overview = await getJson('/api/shipments/overview');
+  const day = overview.body.find(d => d.shipment_date === '20260523');
+  assert.deepEqual(day.segments.map(s => `${s.type_code}:${s.count}:${s.start_seq}-${s.end_seq}`), [
+    'DSH:26:1-26',
+    'LCC:3:27-29',
+    'DSH:1:30-30'
+  ]);
+
+  const table = await getJson('/api/boxes/table');
+  assert.deepEqual(table.body.date_meta['20260523'].segments.map(s => `${s.type_code}:${s.count}`), ['DSH:26', 'LCC:3', 'DSH:1']);
 });
