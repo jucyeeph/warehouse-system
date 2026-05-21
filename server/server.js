@@ -49,6 +49,7 @@ function buildShipmentCodes(shipmentDateRaw, items) {
   if (!Array.isArray(items) || !items.length) throw new Error('请至少填写一个代号');
   const boxes = [];
   let seq = 1;
+  let segment_no = 1;
   for (const item of items) {
     const type_code = String(item.type_code || item.code || '').trim().toUpperCase();
     const count = parseInt(item.count, 10);
@@ -56,9 +57,17 @@ function buildShipmentCodes(shipmentDateRaw, items) {
     if (!/^[A-Z0-9]+$/.test(type_code)) throw new Error(`代号格式错误：${type_code}`);
     if (!Number.isInteger(count) || count <= 0) throw new Error(`箱数错误：${type_code}`);
     for (let i=0;i<count;i++) {
-      boxes.push({ shipment_date, type_code, seq_no: seq, box_code: `${shipment_date}${type_code}${String(seq).padStart(3,'0')}` });
+      boxes.push({
+        shipment_date,
+        type_code,
+        seq_no: seq,
+        box_code: `${shipment_date}${type_code}${String(seq).padStart(3,'0')}`,
+        segment_no,
+        segment_seq: i + 1
+      });
       seq++;
     }
+    segment_no++;
   }
   return { shipment_date, total_count: boxes.length, boxes };
 }
@@ -131,7 +140,9 @@ db.exec(`
     shipment_date TEXT NOT NULL,
     type_code TEXT NOT NULL,
     seq_no INTEGER NOT NULL,
-    box_code TEXT NOT NULL UNIQUE,
+    box_code TEXT NOT NULL,
+    segment_no INTEGER NOT NULL DEFAULT 0,
+    segment_seq INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_arrivals_box  ON arrivals(box_code);
@@ -149,6 +160,56 @@ db.exec(`
   'ALTER TABLE error_records ADD COLUMN linked_po_record_id INTEGER',
   "ALTER TABLE po_records ADD COLUMN box_code TEXT NOT NULL DEFAULT ''",
 ].forEach(sql => { try { db.exec(sql); } catch {} });
+
+
+function hasUniqueShipmentBoxCodeIndex() {
+  const indexes = db.prepare("PRAGMA index_list('shipment_boxes')").all();
+  return indexes.some(idx => {
+    if (!idx.unique) return false;
+    const cols = db.prepare(`PRAGMA index_info(${JSON.stringify(idx.name)})`).all().map(c => c.name);
+    return cols.length === 1 && cols[0] === 'box_code';
+  });
+}
+function ensureShipmentBoxesSchema() {
+  const cols = db.prepare("PRAGMA table_info('shipment_boxes')").all().map(c => c.name);
+  const needsRebuild = hasUniqueShipmentBoxCodeIndex() || !cols.includes('segment_no') || !cols.includes('segment_seq');
+  if (!needsRebuild) return;
+  const hasSegmentNo = cols.includes('segment_no');
+  const hasSegmentSeq = cols.includes('segment_seq');
+  const segmentNoExpr = hasSegmentNo ? 'segment_no' : '0';
+  const segmentSeqExpr = hasSegmentSeq ? 'segment_seq' : '0';
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE shipment_boxes_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          batch_id INTEGER NOT NULL REFERENCES shipment_batches(id) ON DELETE CASCADE,
+          shipment_date TEXT NOT NULL,
+          type_code TEXT NOT NULL,
+          seq_no INTEGER NOT NULL,
+          box_code TEXT NOT NULL,
+          segment_no INTEGER NOT NULL DEFAULT 0,
+          segment_seq INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now','localtime'))
+        );
+        INSERT INTO shipment_boxes_new (id,batch_id,shipment_date,type_code,seq_no,box_code,segment_no,segment_seq,created_at)
+        SELECT id,batch_id,shipment_date,type_code,seq_no,box_code,${segmentNoExpr},${segmentSeqExpr},created_at FROM shipment_boxes;
+        DROP TABLE shipment_boxes;
+        ALTER TABLE shipment_boxes_new RENAME TO shipment_boxes;
+        CREATE INDEX IF NOT EXISTS idx_ship_box      ON shipment_boxes(box_code);
+        CREATE INDEX IF NOT EXISTS idx_ship_date     ON shipment_boxes(shipment_date);
+        CREATE INDEX IF NOT EXISTS idx_ship_batch    ON shipment_boxes(batch_id);
+      `);
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+function isSqliteConstraintError(err) {
+  return err && (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || String(err.message || '').includes('constraint failed'));
+}
+ensureShipmentBoxesSchema();
 
 function sanitizeCodeSegment(value, fallback='unknown') {
   const sanitized = String(value || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
@@ -351,6 +412,8 @@ app.get('/api/boxes/table', (req, res) => {
       shipped: true,
       arrived: false,
       box_code: s.box_code,
+      segment_no: s.segment_no || 0,
+      segment_seq: s.segment_seq || 0,
       shipment_batch_id: s.batch_id,
       shipment_date: displayShipmentDate(s.shipment_date),
       arrival_date: null,
@@ -428,12 +491,27 @@ app.get('/api/boxes/table', (req, res) => {
         }
       }
     }
+    const segments = [];
+    let currentSegment = null;
+    for (const seq of seqs) {
+      const c = cells[seq];
+      if (!c?.shipped) continue;
+      const key = c.segment_no ? `${c.segment_no}:${c.type_code}` : c.type_code;
+      if (!currentSegment || currentSegment.key !== key) {
+        currentSegment = { key, type_code:c.type_code, start_seq:seq, end_seq:seq, count:1 };
+        segments.push(currentSegment);
+      } else {
+        currentSegment.end_seq = seq;
+        currentSegment.count += 1;
+      }
+    }
     const shipped_count = Object.values(table[sdate]).filter(c=>c.shipped).length;
     const arrived_count = Object.values(table[sdate]).filter(c=>c.arrived).length;
     date_meta[sdate] = {
       display: fmtShipDate(sdate),
       display_short: displayShipmentDate(sdate),
       types: typeRanges,
+      segments: segments.map(({key, ...seg}) => seg),
       max_seq: seqs.length ? Math.max(...Object.keys(table[sdate]).map(Number)) : 0,
       shipped_count,
       arrived_count,
@@ -492,38 +570,53 @@ app.get('/api/shipments/overview', (req, res) => {
     ORDER BY sb.shipment_date DESC, sb.seq_no ASC`).all();
   const byDate = {};
   for (const r of rows) {
-    if (!byDate[r.shipment_date]) byDate[r.shipment_date] = { shipment_date:r.shipment_date, display:displayShipmentDate(r.shipment_date), total:0, arrived:0, in_transit:0, type_summary:{}, boxes:[] };
+    if (!byDate[r.shipment_date]) byDate[r.shipment_date] = { shipment_date:r.shipment_date, display:displayShipmentDate(r.shipment_date), total:0, arrived:0, in_transit:0, type_summary:{}, segments:[], boxes:[] };
     const g = byDate[r.shipment_date];
     g.total++;
     if (r.arrival_id) g.arrived++; else g.in_transit++;
     g.type_summary[r.type_code] = (g.type_summary[r.type_code] || 0) + 1;
-    g.boxes.push({ box_code:r.box_code, type_code:r.type_code, seq_no:r.seq_no, arrival_date:r.arrival_date || null });
+    const last = g.segments[g.segments.length - 1];
+    const key = r.segment_no ? `${r.segment_no}:${r.type_code}` : r.type_code;
+    if (!last || last.key !== key) g.segments.push({ key, type_code:r.type_code, start_seq:r.seq_no, end_seq:r.seq_no, count:1 });
+    else { last.end_seq = r.seq_no; last.count += 1; }
+    g.boxes.push({ box_code:r.box_code, type_code:r.type_code, seq_no:r.seq_no, segment_no:r.segment_no || 0, segment_seq:r.segment_seq || 0, arrival_date:r.arrival_date || null });
   }
-  res.json(Object.values(byDate).sort((a,b)=>b.shipment_date.localeCompare(a.shipment_date)));
+  const result = Object.values(byDate).map(g => ({ ...g, segments:g.segments.map(({key, ...seg}) => seg) }));
+  res.json(result.sort((a,b)=>b.shipment_date.localeCompare(a.shipment_date)));
 });
 app.post('/api/shipments/batch', (req, res) => {
   try {
     const { shipment_date, total_count, items, operator } = req.body;
     const built = buildShipmentCodes(shipment_date, items);
     if (parseInt(total_count,10) !== built.total_count) return res.status(400).json({ error:'总箱数与代号箱数合计不一致' });
-    const exists = db.prepare(`SELECT sb.box_code FROM shipment_boxes sb JOIN shipment_batches b ON b.id=sb.batch_id WHERE b.revoked_at IS NULL AND sb.box_code IN (${built.boxes.map(()=>'?').join(',')}) LIMIT 1`).get(...built.boxes.map(b=>b.box_code));
-    if (exists) return res.status(409).json({ error:`箱号已存在：${exists.box_code}` });
     let batchId;
     db.transaction(() => {
+      const exists = db.prepare(`SELECT sb.box_code FROM shipment_boxes sb JOIN shipment_batches b ON b.id=sb.batch_id WHERE b.revoked_at IS NULL AND sb.box_code IN (${built.boxes.map(()=>'?').join(',')}) LIMIT 1`).get(...built.boxes.map(b=>b.box_code));
+      if (exists) {
+        const err = new Error(`箱号已存在于未撤回发货记录：${exists.box_code}`);
+        err.statusCode = 409;
+        throw err;
+      }
       const r = db.prepare('INSERT INTO shipment_batches (shipment_date,total_count,payload_json,operator) VALUES(?,?,?,?)').run(built.shipment_date, built.total_count, JSON.stringify(items), operator || '管理员');
       batchId = r.lastInsertRowid;
-      const stmt = db.prepare('INSERT INTO shipment_boxes (batch_id,shipment_date,type_code,seq_no,box_code) VALUES(?,?,?,?,?)');
-      for (const box of built.boxes) stmt.run(batchId, box.shipment_date, box.type_code, box.seq_no, box.box_code);
+      const stmt = db.prepare('INSERT INTO shipment_boxes (batch_id,shipment_date,type_code,seq_no,box_code,segment_no,segment_seq) VALUES(?,?,?,?,?,?,?)');
+      for (const box of built.boxes) stmt.run(batchId, box.shipment_date, box.type_code, box.seq_no, box.box_code, box.segment_no, box.segment_seq);
     })();
     res.json({ success:true, batch_id:batchId, shipment_date:built.shipment_date, total_count:built.total_count, boxes:built.boxes });
-  } catch (e) { res.status(400).json({ error:e.message }); }
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error:e.message });
+    if (isSqliteConstraintError(e)) return res.status(409).json({ error:'发货记录保存失败：数据约束冲突，请检查是否存在重复未撤回箱号。', detail:e.message });
+    res.status(400).json({ error:e.message });
+  }
 });
 app.get('/api/shipments/batches', (req, res) => {
   const rows = db.prepare(`SELECT b.*,
     (SELECT COUNT(*) FROM shipment_boxes sb WHERE sb.batch_id=b.id) as generated_count,
-    (SELECT COUNT(*) FROM shipment_boxes sb JOIN arrivals a ON a.box_code=sb.box_code WHERE sb.batch_id=b.id) as arrived_count
+    CASE WHEN b.revoked_at IS NULL THEN
+      (SELECT COUNT(*) FROM shipment_boxes sb JOIN arrivals a ON a.box_code=sb.box_code WHERE sb.batch_id=b.id)
+    ELSE 0 END as arrived_count
     FROM shipment_batches b ORDER BY b.created_at DESC LIMIT 50`).all();
-  res.json(rows.map(r=>({ ...r, remaining_count: Math.max((r.generated_count||0)-(r.arrived_count||0),0) })));
+  res.json(rows.map(r=>({ ...r, remaining_count: r.revoked_at ? 0 : Math.max((r.generated_count||0)-(r.arrived_count||0),0) })));
 });
 app.delete('/api/shipments/batches/:id', (req, res) => {
   const batch = db.prepare('SELECT * FROM shipment_batches WHERE id=?').get(req.params.id);

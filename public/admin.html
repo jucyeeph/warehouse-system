@@ -719,7 +719,7 @@ function renderTable(){
   let thead='<thead><tr><th class="seq-th">序</th>';
   for(const sd of shipment_dates){
     const m=date_meta[sd];
-    const typeSummary=Object.entries(m.types).map(([t,{count}])=>`${t}×${count}`).join(' ');
+    const typeSummary=(m.segments&&m.segments.length?m.segments.map(seg=>`${seg.type_code}×${seg.count}`).join(' | '):Object.entries(m.types).map(([t,{count}])=>`${t}×${count}`).join(' '));
     const active=selShipmentDate===sd?' style="box-shadow:inset 0 -3px 0 #fde68a"':'';
     thead+=`<th onclick="selectShipmentDate('${sd}')" ${active}>${m.display}<div class="th-types">${typeSummary}</div><div class="th-types">已到 ${m.arrived_count||0} / 发 ${m.shipped_count||0}</div></th>`;
   }
@@ -1109,12 +1109,14 @@ function buildShipmentPreviewData(){
   const {shipment_date,total_count,items}=getShipmentFormData();
   if(!shipment_date||!items.length) return {ok:false,msg:'请先填写发货日期、总箱数和代号箱数。'};
   const date8=shipment_date.replace(/-/g,'');
-  let seq=1, boxes=[];
+  let seq=1, boxes=[], segments=[];
   for(const it of items){
     if(!it.type_code||!it.count) continue;
+    const start=seq;
     for(let i=0;i<it.count;i++) boxes.push(`${date8}${it.type_code}${String(seq++).padStart(3,'0')}`);
+    segments.push({type_code:it.type_code,count:it.count,start_seq:start,end_seq:seq-1});
   }
-  return {ok:true,total_count,items,boxes,sum:boxes.length};
+  return {ok:true,total_count,items,boxes,segments,sum:boxes.length};
 }
 function renderShipmentPreview(){
   const box=document.getElementById('ship-preview');
@@ -1122,7 +1124,8 @@ function renderShipmentPreview(){
   if(!d.ok){ box.textContent=d.msg; return; }
   const warn=d.total_count&&d.total_count!==d.sum?`
 ⚠️ 总箱数 ${d.total_count} 与明细合计 ${d.sum} 不一致`:' ';
-  box.innerHTML=`<div style="margin-bottom:8px">合计生成 <b>${d.sum}</b> 个箱号${warn?`<span style="color:#dc2626">${warn}</span>`:''}</div><div>${d.boxes.join('<br>')}</div>`;
+  const segmentText=d.segments.map(seg=>`${seg.type_code}×${seg.count}（${String(seg.start_seq).padStart(3,'0')}${seg.start_seq===seg.end_seq?'':'-'+String(seg.end_seq).padStart(3,'0')}）`).join('　|　');
+  box.innerHTML=`<div style="margin-bottom:8px">合计生成 <b>${d.sum}</b> 个箱号${warn?`<span style="color:#dc2626">${warn}</span>`:''}</div><div style="margin-bottom:8px;color:var(--muted)">按输入分段：${segmentText}</div><div>${d.boxes.join('<br>')}</div>`;
 }
 function resetShipmentForm(){
   document.getElementById('ship-date').value='';
