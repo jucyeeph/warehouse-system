@@ -78,3 +78,59 @@ cp scripts/nas/run-production-snapshot-cron.sh \
   /volume1/docker/warehouse-system-snapshot-tools/run-snapshot-cron.sh
 chmod +x /volume1/docker/warehouse-system-snapshot-tools/*.sh
 ```
+
+## 测试端沙盒重置
+
+测试端 ShareSync 镜像目录：
+
+```text
+/volume1/warehouse-system-test/data
+```
+
+测试项目当前 `docker-compose.test-nas.yml` 实际挂载：
+
+```text
+/volume1/docker/ddq-warehouse-system-test/data-test
+```
+
+为了兼容规划中的友好路径，测试 NAS 上创建了软链接：
+
+```text
+/volume1/docker/ddq-warehouse-system-test/data -> data-test
+```
+
+测试前重置沙盒脚本：
+
+```text
+/volume1/docker/ddq-warehouse-system-test/sandbox-tools/reset-test-sandbox.sh
+```
+
+脚本逻辑：
+
+1. 检查 `/volume1/warehouse-system-test/data/warehouse.db` 完整性；
+2. 自动备份旧沙盒到：
+   ```text
+   /volume1/docker/ddq-warehouse-system-test/backups/sandbox-reset/
+   ```
+3. 清空并重建：
+   ```text
+   /volume1/docker/ddq-warehouse-system-test/data-test
+   ```
+4. 从同步镜像复制最新数据；
+5. 删除测试端 SQLite 运行临时文件 `warehouse.db-wal`、`warehouse.db-shm`；
+6. 再次检查沙盒数据库完整性。
+
+手动执行：
+
+```bash
+/volume1/docker/ddq-warehouse-system-test/sandbox-tools/reset-test-sandbox.sh
+```
+
+恢复/重新部署参考：
+
+```bash
+mkdir -p /volume1/docker/ddq-warehouse-system-test/sandbox-tools/logs
+cp scripts/nas/reset-test-sandbox.sh \
+  /volume1/docker/ddq-warehouse-system-test/sandbox-tools/reset-test-sandbox.sh
+chmod +x /volume1/docker/ddq-warehouse-system-test/sandbox-tools/reset-test-sandbox.sh
+```
