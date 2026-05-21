@@ -7,13 +7,11 @@ set -eu
 # Default test NAS paths:
 #   Incoming mirror: /volume1/warehouse-system-test/data
 #   Test project:    /volume1/docker/ddq-warehouse-system-test
-#   Actual sandbox:  /volume1/docker/ddq-warehouse-system-test/data-test
-#   Friendly alias:  /volume1/docker/ddq-warehouse-system-test/data -> data-test
+#   Sandbox data:    /volume1/docker/ddq-warehouse-system-test/data-test
 
 INCOMING_DATA="${INCOMING_DATA:-/volume1/warehouse-system-test/data}"
 PROJECT_ROOT="${PROJECT_ROOT:-/volume1/docker/ddq-warehouse-system-test}"
 SANDBOX_DATA="${SANDBOX_DATA:-$PROJECT_ROOT/data-test}"
-SANDBOX_ALIAS="${SANDBOX_ALIAS:-$PROJECT_ROOT/data}"
 TOOL_ROOT="${TOOL_ROOT:-$PROJECT_ROOT/sandbox-tools}"
 BACKUP_ROOT="${BACKUP_ROOT:-$PROJECT_ROOT/backups/sandbox-reset}"
 DB_NAME="${DB_NAME:-warehouse.db}"
@@ -34,12 +32,6 @@ fi
 
 if [ ! -f "$INCOMING_DATA/$DB_NAME" ]; then
   log "ERROR incoming database not found: $INCOMING_DATA/$DB_NAME"
-  exit 1
-fi
-
-if [ -e "$SANDBOX_ALIAS" ] && [ ! -L "$SANDBOX_ALIAS" ]; then
-  log "ERROR sandbox alias exists but is not a symlink: $SANDBOX_ALIAS"
-  log "Refusing to overwrite it. Please inspect manually."
   exit 1
 fi
 
@@ -70,9 +62,6 @@ rm -f "$SANDBOX_DATA/$DB_NAME-wal" "$SANDBOX_DATA/$DB_NAME-shm" "$SANDBOX_DATA/$
 
 sqlite3 "$SANDBOX_DATA/$DB_NAME" 'PRAGMA integrity_check;' | grep -qx 'ok'
 
-# Make the user-facing path /data point to the actual compose-mounted data-test folder.
-ln -sfn "data-test" "$SANDBOX_ALIAS"
-
 find "$SANDBOX_DATA" -type d -exec chmod 777 {} +
 find "$SANDBOX_DATA" -type f -exec chmod 666 {} +
 
@@ -83,7 +72,6 @@ cat > "$TOOL_ROOT/latest-reset-meta.json" <<EOF
   "resetAt": "$(date -Iseconds)",
   "incomingData": "$INCOMING_DATA",
   "sandboxData": "$SANDBOX_DATA",
-  "sandboxAlias": "$SANDBOX_ALIAS",
   "database": "$DB_NAME",
   "databaseBytes": $DB_SIZE,
   "uploadFileCount": $UPLOAD_COUNT

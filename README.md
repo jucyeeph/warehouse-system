@@ -180,7 +180,7 @@ rm -rf data-test
     ↓ 测试前复制一份
 
 测试端沙盒运行目录
-/volume1/docker/ddq-warehouse-system-test/data
+/volume1/docker/ddq-warehouse-system-test/data-test
 ```
 
 ### 三个 data 目录的职责
@@ -219,7 +219,7 @@ rm -rf data-test
 #### 4. 测试端沙盒运行目录
 
 ```text
-/volume1/docker/ddq-warehouse-system-test/data
+/volume1/docker/ddq-warehouse-system-test/data-test
 ```
 
 测试系统真正使用这个目录。
@@ -278,13 +278,13 @@ sqlite3 /volume1/docker/warehouse-system/data/warehouse.db \
 1. 停止测试端容器；
 2. 清空测试端沙盒目录：
    ```text
-   /volume1/docker/ddq-warehouse-system-test/data
+   /volume1/docker/ddq-warehouse-system-test/data-test
    ```
 3. 从测试端同步镜像目录复制一份到沙盒目录：
    ```text
    /volume1/warehouse-system-test/data
    →
-   /volume1/docker/ddq-warehouse-system-test/data
+   /volume1/docker/ddq-warehouse-system-test/data-test
    ```
 4. 启动测试端容器；
 5. 测试系统只使用沙盒目录。
@@ -339,7 +339,7 @@ sqlite3 /volume1/docker/warehouse-system/data/warehouse.db \
 测试系统容器挂载：
 
 ```text
-/volume1/docker/ddq-warehouse-system-test/data
+/volume1/docker/ddq-warehouse-system-test/data-test
 ```
 
 不要挂载：

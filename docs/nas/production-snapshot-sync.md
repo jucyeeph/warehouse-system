@@ -87,16 +87,10 @@ chmod +x /volume1/docker/warehouse-system-snapshot-tools/*.sh
 /volume1/warehouse-system-test/data
 ```
 
-测试项目当前 `docker-compose.test-nas.yml` 实际挂载：
+测试项目当前 `docker-compose.test-nas.yml` 实际挂载，且统一作为测试沙盒目录：
 
 ```text
 /volume1/docker/ddq-warehouse-system-test/data-test
-```
-
-为了兼容规划中的友好路径，测试 NAS 上创建了软链接：
-
-```text
-/volume1/docker/ddq-warehouse-system-test/data -> data-test
 ```
 
 测试前重置沙盒脚本：
