@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(__dirname, 'server.js');
@@ -65,6 +66,13 @@ function listUploads() {
   return files.sort();
 }
 
+function writeUpload(relPath, content = 'fake image bytes') {
+  const abs = path.join(UPLOADS_DIR, ...relPath.split('/'));
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content);
+  return abs;
+}
+
 function assertNoUnknownUploads() {
   assert.equal(fs.existsSync(path.join(UPLOADS_DIR, 'unknown')), false, 'new uploads must not create uploads/unknown');
 }
@@ -72,7 +80,7 @@ function assertNoUnknownUploads() {
 test.before(async () => {
   child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   child.stdout.on('data', d => process.stdout.write(String(d)));
@@ -121,6 +129,228 @@ test('PC no-box upload uses explicit date/No box code folder, never unknown', as
   assert.equal(r.body.success, true);
   assertNoUnknownUploads();
   assert.match(listUploads().join('\n'), /^2026-05-15\/No box code\/POMCMP030458_NOBOXCODE_/m);
+});
+
+test('manual PO no-box upload stores explicit arrival date and appears in PO/error lookup', async () => {
+  await postJson('/api/arrival', { box_code: '20260520DSH001', worker_name: 'receiver', arrival_date: '2026-05-20' });
+  const r = await postPhoto('/api/po-record/manual', { po_code: 'POMCMP028283', arrival_date: '2026-05-20', notes: 'manual no box' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.success, true);
+  assert.equal(r.body.arrival_date, '2026-05-20');
+  assert.equal(r.body.photo_path.startsWith('uploads/'), false, 'photo_path must be relative to uploads root');
+  assert.match(r.body.photo_path, /^2026-05-20\/No box code\/POMCMP028283_NOBOXCODE_\d{8}_\d{6}\.jpg$/);
+  assert.match(listUploads().join('\n'), /^2026-05-20\/No box code\/POMCMP028283_NOBOXCODE_/m);
+
+  const overview = await getJson('/api/po/overview?search=POMCMP028283');
+  assert.equal(overview.status, 200);
+  const day = overview.body.find(g => g.arrival_date === '2026-05-20');
+  assert.ok(day);
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028283'));
+
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028283', worker_name: 'qc', error_description: 'wrong item' });
+  assert.equal(err.status, 200);
+  const detail = await getJson(`/api/errors/${err.body.id}`);
+  assert.equal(detail.status, 200);
+  assert.ok(detail.body.po_records.find(p => p.po_code === 'POMCMP028283' && p.arrival_date === '2026-05-20'));
+});
+
+test('error record can one-click create and link a no-box PO record', async () => {
+  await postJson('/api/arrival', { box_code: '20260524DSH001', worker_name: 'receiver', arrival_date: '2026-05-24' });
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028286', worker_name: 'qc', error_description: 'missing manual PO' });
+  assert.equal(err.status, 200);
+
+  const created = await postJson(`/api/errors/${err.body.id}/create-po-record`, {
+    po_code: 'POMCMP028286',
+    arrival_date: '2026-05-24',
+    notes: 'created from error'
+  });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.success, true);
+  assert.equal(created.body.arrival_date, '2026-05-24');
+  assert.equal(created.body.photo_path.startsWith('uploads/'), false, 'photo_path must be relative to uploads root');
+  assert.match(created.body.photo_path, /^2026-05-24\/No box code\/POMCMP028286_NOBOXCODE_\d{8}_\d{6}\.jpg$/);
+  assert.match(listUploads().join('\n'), /^2026-05-24\/No box code\/POMCMP028286_NOBOXCODE_/m);
+
+  const detail = await getJson(`/api/errors/${err.body.id}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.record.linked_po_record_id, created.body.po_record_id);
+  assert.ok(detail.body.po_records.find(p => p.id === created.body.po_record_id && p.arrival_date === '2026-05-24'));
+
+  const overview = await getJson('/api/po/overview?search=POMCMP028286');
+  assert.equal(overview.status, 200);
+  const day = overview.body.find(g => g.arrival_date === '2026-05-24');
+  assert.ok(day, 'po overview should group the copied error image by selected arrival folder date');
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028286'));
+});
+
+test('error-to-PO creation rejects missing source image or non-existing arrival date without dirty rows', async () => {
+  const fixtureDb = new Database(DB_PATH);
+  const missing = fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, error_description, worker_name) VALUES (?, ?, ?, ?)`)
+    .run('POMCMP028287', 'Error PO Paper/missing-file.jpg', 'missing source', 'qc').lastInsertRowid;
+  const beforeMissingPo = fixtureDb.prepare('SELECT COUNT(*) as c FROM po_records').get().c;
+  fixtureDb.close();
+
+  const missingResult = await postJson(`/api/errors/${missing}/create-po-record`, { po_code: 'POMCMP028287', arrival_date: '2026-05-24' });
+  assert.equal(missingResult.status, 400);
+  assert.match(missingResult.body.error, /图片源文件不存在/);
+
+  let checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM po_records').get().c, beforeMissingPo);
+  assert.equal(checkDb.prepare('SELECT linked_po_record_id FROM error_records WHERE id=?').get(missing).linked_po_record_id, null);
+  checkDb.close();
+
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028288', worker_name: 'qc', error_description: 'bad date' });
+  assert.equal(err.status, 200);
+  checkDb = new Database(DB_PATH);
+  const beforeBadDatePo = checkDb.prepare('SELECT COUNT(*) as c FROM po_records').get().c;
+  checkDb.close();
+
+  const badDate = await postJson(`/api/errors/${err.body.id}/create-po-record`, { po_code: 'POMCMP028288', arrival_date: '2099-01-01' });
+  assert.equal(badDate.status, 400);
+  assert.match(badDate.body.error, /到货日期不存在|已有到货日期/);
+
+  checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM po_records').get().c, beforeBadDatePo);
+  assert.equal(checkDb.prepare('SELECT linked_po_record_id FROM error_records WHERE id=?').get(err.body.id).linked_po_record_id, null);
+  checkDb.close();
+  assert.equal(listUploads().some(f => f.includes('POMCMP028288_NOBOXCODE')), false);
+});
+
+test('PO overview and lookups prefer the upload folder date over cached DB arrival_date', async () => {
+  const fixtureDb = new Database(DB_PATH);
+  fixtureDb.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes)
+    VALUES ('', ?, ?, ?, ?)`)
+    .run('2026-05-19', 'POMCMP028284', '2026-05-20/No box code/POMCMP028284_NOBOXCODE_20260523_183000.jpg', 'stale cached date');
+  fixtureDb.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes)
+    VALUES ('', NULL, ?, ?, ?)`)
+    .run('POMCMP028285', '2026-05-20/No box code/POMCMP028285_NOBOXCODE_20260523_183001.jpg', 'missing cached date');
+  fixtureDb.close();
+
+  const overview = await getJson('/api/po/overview?search=POMCMP02828');
+  assert.equal(overview.status, 200);
+  const day = overview.body.find(g => g.arrival_date === '2026-05-20');
+  assert.ok(day, 'overview should group by the first YYYY-MM-DD photo_path folder');
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028284'));
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028285'));
+  assert.equal(overview.body.some(g => g.arrival_date === '2026-05-19' && g.pos.some(p => p.po_code === 'POMCMP028284')), false);
+
+  const all = await getJson('/api/po/all?search=POMCMP028284');
+  assert.equal(all.status, 200);
+  assert.equal(all.body[0].arrival_date, '2026-05-20');
+
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028284', worker_name: 'qc', error_description: 'folder date lookup' });
+  assert.equal(err.status, 200);
+  const detail = await getJson(`/api/errors/${err.body.id}`);
+  assert.equal(detail.status, 200);
+  assert.ok(detail.body.po_records.find(p => p.po_code === 'POMCMP028284' && p.arrival_date === '2026-05-20'));
+});
+
+test('fs-sync preview scans folder PO images without writing DB and reports exceptions', async () => {
+  writeUpload('2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg');
+  writeUpload('2026-05-20/No box code/POMCMPFSB001_NOBOXCODE_20260520_120000.jpg');
+  writeUpload('2026-05-20/20260520DSH001/POMCMPFSB002_20260520DSH001_20260520_120001.jpg');
+  writeUpload('2026-05-20/No box code/BADNAME_20260520_120002.jpg');
+  writeUpload('2026-05-20/No box code/BAD_NOBOXCODE_20260520_144644.jpg');
+  writeUpload('not-a-date/No box code/POMCMP028399_NOBOXCODE_20260520_144644.jpg');
+  writeUpload('Error PO Paper/POMCMP028398_error_20260520_144644.jpg');
+
+  const beforeDb = new Database(DB_PATH);
+  const beforePo = beforeDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get('2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg').c;
+  beforeDb.close();
+
+  const preview = await getJson('/api/fs-sync/po-preview');
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.success, true);
+  assert.ok(preview.body.records.find(r => r.photo_path === '2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg'));
+  assert.equal(preview.body.records.find(r => r.photo_path === '2026-05-20/No box code/POMCMPFSB001_NOBOXCODE_20260520_120000.jpg')?.po_code, 'POMCMPFSB001');
+  assert.equal(preview.body.records.find(r => r.photo_path === '2026-05-20/20260520DSH001/POMCMPFSB002_20260520DSH001_20260520_120001.jpg')?.po_code, 'POMCMPFSB002');
+  assert.ok(preview.body.unrecognized_files.find(r => r.photo_path === '2026-05-20/No box code/BADNAME_20260520_120002.jpg'));
+  assert.ok(preview.body.unrecognized_files.find(r => r.photo_path === '2026-05-20/No box code/BAD_NOBOXCODE_20260520_144644.jpg'));
+  assert.equal(preview.body.records.some(r => r.photo_path.includes('not-a-date')), false);
+  assert.equal(preview.body.records.some(r => r.photo_path.startsWith('Error PO Paper/')), false);
+
+  const afterDb = new Database(DB_PATH);
+  assert.equal(afterDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get('2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg').c, beforePo, 'preview must not write DB');
+  afterDb.close();
+});
+
+test('fs-sync apply inserts no-box PO records and skips duplicate photo_path', async () => {
+  const rel = '2026-05-20/No box code/POMCMP028302_NOBOXCODE_20260520_144644.png';
+  writeUpload(rel);
+
+  const applied = await postJson('/api/fs-sync/po-apply', {});
+  assert.equal(applied.status, 200);
+  assert.equal(applied.body.success, true);
+  assert.ok(applied.body.inserted_po_records >= 1);
+
+  let checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get(rel).c, 1);
+  checkDb.close();
+
+  const again = await getJson('/api/fs-sync/po-preview');
+  assert.equal(again.status, 200);
+  assert.ok(again.body.duplicate_files.find(r => r.photo_path === rel));
+  const appliedAgain = await postJson('/api/fs-sync/po-apply', {});
+  assert.equal(appliedAgain.status, 200);
+  checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get(rel).c, 1, 'same photo_path must not be inserted twice');
+  checkDb.close();
+});
+
+test('fs-sync apply supplements missing arrivals for boxed folders and respects folder date in PO manager', async () => {
+  const rel = '2026-05-21/20260521DSH901（临时备注）/POMCMP028303_20260521DSH901_20260521_144644.WEBP';
+  writeUpload(rel);
+
+  const preview = await getJson('/api/fs-sync/po-preview');
+  assert.equal(preview.status, 200);
+  const row = preview.body.records.find(r => r.photo_path === rel);
+  assert.equal(row.box_code, '20260521DSH901');
+  assert.equal(row.arrival_action, 'create');
+
+  const applied = await postJson('/api/fs-sync/po-apply', {});
+  assert.equal(applied.status, 200);
+
+  const checkDb = new Database(DB_PATH);
+  const arrival = checkDb.prepare('SELECT arrival_date, worker_name FROM arrivals WHERE box_code=?').get('20260521DSH901');
+  assert.equal(arrival.arrival_date, '2026-05-21');
+  assert.equal(arrival.worker_name, '文件夹同步');
+  checkDb.close();
+
+  const overview = await getJson('/api/po/overview?search=POMCMP028303');
+  assert.ok(overview.body.find(g => g.arrival_date === '2026-05-21')?.pos.find(p => p.po_code === 'POMCMP028303'));
+});
+
+test('fs-sync updates empty arrival dates but warns and preserves conflicting arrival dates', async () => {
+  const fixtureDb = new Database(DB_PATH);
+  fixtureDb.prepare('INSERT INTO arrivals (box_code, arrival_date, worker_name) VALUES (?, ?, ?)').run('20260522DSH901', null, 'receiver');
+  fixtureDb.prepare('INSERT INTO arrivals (box_code, arrival_date, worker_name) VALUES (?, ?, ?)').run('20260522DSH902', '2026-05-19', 'receiver');
+  fixtureDb.close();
+  writeUpload('2026-05-22/20260522DSH901/POMCMP028304_20260522DSH901_20260522_144644.heic');
+  writeUpload('2026-05-22/20260522DSH902/POMCMP028305_20260522DSH902_20260522_144644.heif');
+
+  const preview = await getJson('/api/fs-sync/po-preview');
+  assert.equal(preview.body.records.find(r => r.po_code === 'POMCMP028304').arrival_action, 'update_empty');
+  assert.ok(preview.body.warnings.find(w => w.box_code === '20260522DSH902'));
+
+  const applied = await postJson('/api/fs-sync/po-apply', {});
+  assert.equal(applied.status, 200);
+  const checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT arrival_date FROM arrivals WHERE box_code=?').get('20260522DSH901').arrival_date, '2026-05-22');
+  assert.equal(checkDb.prepare('SELECT arrival_date FROM arrivals WHERE box_code=?').get('20260522DSH902').arrival_date, '2026-05-19');
+  checkDb.close();
+});
+
+test('fs-sync apply rolls back transaction on failure', async () => {
+  const rel = '2026-05-23/20260523DSH901/POMCMP028306_20260523DSH901_20260523_144644.jpg';
+  writeUpload(rel);
+  const failed = await postJson('/api/fs-sync/po-apply', { simulate_error: true });
+  assert.equal(failed.status, 500);
+  assert.match(failed.body.error, /Simulated fs-sync failure/);
+
+  const checkDb = new Database(DB_PATH);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get(rel).c, 0);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM arrivals WHERE box_code=?').get('20260523DSH901').c, 0);
+  checkDb.close();
 });
 
 test('error PO photos are isolated under Error PO Paper', async () => {
