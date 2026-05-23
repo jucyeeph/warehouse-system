@@ -96,6 +96,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER REFERENCES unboxing_sessions(id),
     box_code TEXT NOT NULL DEFAULT '',
+    arrival_date TEXT,
     po_code TEXT NOT NULL,
     photo_path TEXT,
     notes TEXT,
@@ -148,6 +149,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_arrivals_box  ON arrivals(box_code);
   CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_box        ON po_records(box_code);
+  CREATE INDEX IF NOT EXISTS idx_po_arrival   ON po_records(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_code       ON po_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_po        ON error_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_status    ON error_records(review_status);
@@ -159,7 +161,9 @@ db.exec(`
   'ALTER TABLE arrivals ADD COLUMN unboxed_at TEXT',
   'ALTER TABLE error_records ADD COLUMN linked_po_record_id INTEGER',
   "ALTER TABLE po_records ADD COLUMN box_code TEXT NOT NULL DEFAULT ''",
+  'ALTER TABLE po_records ADD COLUMN arrival_date TEXT',
 ].forEach(sql => { try { db.exec(sql); } catch {} });
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_po_arrival ON po_records(arrival_date)'); } catch {}
 
 
 function hasUniqueShipmentBoxCodeIndex() {
@@ -312,7 +316,7 @@ function resolvePoUploadMeta(req, { allowArrivalDateFallback=false } = {}) {
   return {
     rawPo: filePo, rawBox: 'NOBOXCODE', rawDate: adate,
     relDir: `${adate}/No box code`, absDir: ensureNoBoxUploadDir(adate),
-    filename: `${filePo}_NOBOXCODE_${buildPhotoStamp()}${suffix}${ext}`
+    filename: `${filePo}_NOBOXCODE_${buildPhotoStamp()}${suffix}.jpg`
   };
 }
 function buildPhotoStamp() {
@@ -734,19 +738,28 @@ app.post('/api/unboxing/po', (req, res) => {
       if (po_code) assertValidPoCode(finalPo);
       if (!po_code && !(no_po_reason || notes)) return res.status(400).json({ error: 'Missing PO code. If there is no PO paper, select a reason.' });
       const photo_path = getPhotoPath(req);
-      const r = db.prepare('INSERT INTO po_records (session_id,box_code,po_code,photo_path,notes) VALUES(?,?,?,?,?)')
-        .run(session_id||null, code, finalPo, photo_path, notes||no_po_reason||null);
+      const arrivalDate = req._photoMeta?.rawDate || null;
+      const r = db.prepare('INSERT INTO po_records (session_id,box_code,arrival_date,po_code,photo_path,notes) VALUES(?,?,?,?,?,?)')
+        .run(session_id||null, code, arrivalDate, finalPo, photo_path, notes||no_po_reason||null);
       res.json({ success:true, id:r.lastInsertRowid });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
 });
-app.post('/api/po-record/manual', poUpload.single('photo'), (req, res) => {
-  const { po_code, notes, box_code } = req.body;
-  if (!po_code) return res.status(400).json({ error: 'Missing PO code.' });
-  const photo_path = getPhotoPath(req);
-  const r = db.prepare('INSERT INTO po_records (box_code,po_code,photo_path,notes) VALUES(?,?,?,?)')
-    .run(box_code?.trim()||'', po_code.trim(), photo_path, notes||null);
-  res.json({ success:true, id:r.lastInsertRowid });
+app.post('/api/po-record/manual', (req, res) => {
+  pcUpload.single('photo')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.message });
+    try {
+      const { po_code, notes, box_code } = req.body;
+      const finalPo = normalizePoCode(po_code);
+      assertValidPoCode(finalPo);
+      const finalBox = String(box_code || '').trim().toUpperCase();
+      const arrivalDate = req._photoMeta?.rawDate || null;
+      const photo_path = getPhotoPath(req);
+      const r = db.prepare('INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES(?,?,?,?,?)')
+        .run(finalBox, arrivalDate, finalPo, photo_path, notes||null);
+      res.json({ success:true, id:r.lastInsertRowid, arrival_date:arrivalDate, photo_path });
+    } catch(e) { res.status(400).json({ error:e.message }); }
+  });
 });
 
 // PC operator upload: keeps date-based fallback when box_code is unknown
@@ -780,8 +793,9 @@ app.post('/api/po-record/pc', (req, res) => {
       if (po_code) assertValidPoCode(finalPo);
       if (!po_code && !(no_po_reason || notes)) return res.status(400).json({ error: 'Missing PO code. If there is no PO paper, select a reason.' });
       const photo_path = req.file ? `${req._photoRelDir}/${req.file.filename}` : null;
-      const r = db.prepare("INSERT INTO po_records (box_code,po_code,photo_path,notes) VALUES('',?,?,?)")
-        .run(finalPo, photo_path, notes||no_po_reason||null);
+      const arrivalDate = req._photoMeta?.rawDate || null;
+      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES('',?,?,?,?)")
+        .run(arrivalDate, finalPo, photo_path, notes||no_po_reason||null);
       res.json({ success:true, id:r.lastInsertRowid });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
@@ -804,7 +818,7 @@ app.get('/api/po/all', (req, res) => {
   const { sort='created_at', dir='DESC', search='' } = req.query;
   const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
   const col = validSort[sort]||'pr.created_at', d = dir==='ASC'?'ASC':'DESC';
-  let sql = `SELECT pr.*, a.arrival_date as arrival_date, a.unboxed_at,
+  let sql = `SELECT pr.*, COALESCE(a.arrival_date, pr.arrival_date) as arrival_date, a.unboxed_at,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code`;
   const p = [];
@@ -814,8 +828,8 @@ app.get('/api/po/all', (req, res) => {
 });
 app.get('/api/po/overview', (req, res) => {
   const search = String(req.query.search || '').trim();
-  let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.photo_path, pr.notes, pr.created_at,
-    COALESCE(a.arrival_date, date(pr.created_at)) as group_arrival_date,
+  let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.arrival_date, pr.photo_path, pr.notes, pr.created_at,
+    COALESCE(a.arrival_date, pr.arrival_date) as group_arrival_date,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr
     LEFT JOIN arrivals a ON a.box_code=pr.box_code`;
@@ -873,7 +887,7 @@ app.get('/api/errors/:id', (req, res) => {
     pr.created_at as linked_unboxing_date, pr.photo_path as linked_photo_path, pr.id as linked_po_id
     FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE er.id=?`).get(req.params.id);
   if (!record) return res.status(404).json({ error: '未找到' });
-  const po_records = db.prepare(`SELECT pr.*, a.scanned_at as arrival_date, a.unboxed_at,
+  const po_records = db.prepare(`SELECT pr.*, COALESCE(a.arrival_date, pr.arrival_date) as arrival_date, a.unboxed_at,
     (SELECT COUNT(*) FROM error_records e2 WHERE e2.linked_po_record_id=pr.id) as error_count
     FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code WHERE pr.po_code=? ORDER BY pr.created_at DESC`).all(record.po_code);
   const related_errors = db.prepare('SELECT * FROM error_records WHERE po_code=? AND id!=? ORDER BY created_at DESC').all(record.po_code, record.id);

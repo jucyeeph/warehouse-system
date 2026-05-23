@@ -123,6 +123,29 @@ test('PC no-box upload uses explicit date/No box code folder, never unknown', as
   assert.match(listUploads().join('\n'), /^2026-05-15\/No box code\/POMCMP030458_NOBOXCODE_/m);
 });
 
+test('manual PO no-box upload stores explicit arrival date and appears in PO/error lookup', async () => {
+  await postJson('/api/arrival', { box_code: '20260520DSH001', worker_name: 'receiver', arrival_date: '2026-05-20' });
+  const r = await postPhoto('/api/po-record/manual', { po_code: 'POMCMP028283', arrival_date: '2026-05-20', notes: 'manual no box' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.success, true);
+  assert.equal(r.body.arrival_date, '2026-05-20');
+  assert.equal(r.body.photo_path.startsWith('uploads/'), false, 'photo_path must be relative to uploads root');
+  assert.match(r.body.photo_path, /^2026-05-20\/No box code\/POMCMP028283_NOBOXCODE_\d{8}_\d{6}\.jpg$/);
+  assert.match(listUploads().join('\n'), /^2026-05-20\/No box code\/POMCMP028283_NOBOXCODE_/m);
+
+  const overview = await getJson('/api/po/overview?search=POMCMP028283');
+  assert.equal(overview.status, 200);
+  const day = overview.body.find(g => g.arrival_date === '2026-05-20');
+  assert.ok(day);
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028283'));
+
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028283', worker_name: 'qc', error_description: 'wrong item' });
+  assert.equal(err.status, 200);
+  const detail = await getJson(`/api/errors/${err.body.id}`);
+  assert.equal(detail.status, 200);
+  assert.ok(detail.body.po_records.find(p => p.po_code === 'POMCMP028283' && p.arrival_date === '2026-05-20'));
+});
+
 test('error PO photos are isolated under Error PO Paper', async () => {
   const r = await postPhoto('/api/error', { po_code: 'POMCMP030459', worker_name: 'pc', error_description: 'import failed' });
   assert.equal(r.status, 200);
