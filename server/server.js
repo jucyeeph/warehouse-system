@@ -231,6 +231,18 @@ function normalizeArrivalDate(input) {
   if (/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
   return null;
 }
+function arrivalDateFromPhotoPath(photoPath) {
+  const firstSegment = String(photoPath || '').split(/[\\/]+/).find(Boolean);
+  if (!firstSegment || !/^\d{4}-\d{2}-\d{2}$/.test(firstSegment)) return null;
+  return normalizeArrivalDate(firstSegment);
+}
+function resolvePoArrivalDate(row) {
+  return arrivalDateFromPhotoPath(row?.photo_path)
+    || normalizeArrivalDate(row?.arrival_date)
+    || normalizeArrivalDate(row?.box_arrival_date)
+    || normalizeArrivalDate(row?.group_arrival_date)
+    || null;
+}
 function normalizePoCode(input) { return String(input || '').trim().toUpperCase(); }
 function isValidPoCode(input) { return /^POMCMP\d{6}$/.test(normalizePoCode(input)); }
 function looksLikePoCode(input) { return /^POMCMP/i.test(String(input || '').trim()); }
@@ -817,27 +829,30 @@ app.get('/api/po/all', (req, res) => {
   const { sort='created_at', dir='DESC', search='' } = req.query;
   const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
   const col = validSort[sort]||'pr.created_at', d = dir==='ASC'?'ASC':'DESC';
-  let sql = `SELECT pr.*, COALESCE(a.arrival_date, pr.arrival_date) as arrival_date, a.unboxed_at,
+  let sql = `SELECT pr.*, a.arrival_date as box_arrival_date, a.unboxed_at,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code`;
   const p = [];
   if (search) { sql += ' WHERE pr.po_code LIKE ?'; p.push(`%${search}%`); }
   sql += ` ORDER BY ${col} ${d}`;
-  res.json(db.prepare(sql).all(...p));
+  const rows = db.prepare(sql).all(...p).map(r => ({ ...r, arrival_date: resolvePoArrivalDate(r) }));
+  res.json(rows);
 });
 app.get('/api/po/overview', (req, res) => {
   const search = String(req.query.search || '').trim();
   let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.arrival_date, pr.photo_path, pr.notes, pr.created_at,
-    COALESCE(a.arrival_date, pr.arrival_date) as group_arrival_date,
+    a.arrival_date as box_arrival_date,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr
     LEFT JOIN arrivals a ON a.box_code=pr.box_code`;
   const params = [];
   if (search) { sql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
-  sql += ' ORDER BY group_arrival_date DESC, pr.po_code ASC, pr.created_at ASC';
+  sql += ' ORDER BY pr.po_code ASC, pr.created_at ASC';
   const rows = db.prepare(sql).all(...params);
   const byDate = {};
-  for (const r of rows) {
+  for (const row of rows) {
+    const resolvedArrivalDate = resolvePoArrivalDate(row);
+    const r = { ...row, arrival_date: resolvedArrivalDate, group_arrival_date: resolvedArrivalDate };
     const adate = r.group_arrival_date || '未关联到货';
     if (!byDate[adate]) byDate[adate] = { arrival_date: adate, po_map: {} };
     if (!byDate[adate].po_map[r.po_code]) byDate[adate].po_map[r.po_code] = { po_code: r.po_code, error_count: 0, has_error: false, records: [] };
@@ -886,9 +901,11 @@ app.get('/api/errors/:id', (req, res) => {
     pr.created_at as linked_unboxing_date, pr.photo_path as linked_photo_path, pr.id as linked_po_id
     FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE er.id=?`).get(req.params.id);
   if (!record) return res.status(404).json({ error: '未找到' });
-  const po_records = db.prepare(`SELECT pr.*, COALESCE(a.arrival_date, pr.arrival_date) as arrival_date, a.unboxed_at,
+  const po_records = db.prepare(`SELECT pr.*, a.arrival_date as box_arrival_date, a.unboxed_at,
     (SELECT COUNT(*) FROM error_records e2 WHERE e2.linked_po_record_id=pr.id) as error_count
-    FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code WHERE pr.po_code=? ORDER BY pr.created_at DESC`).all(record.po_code);
+    FROM po_records pr LEFT JOIN arrivals a ON pr.box_code=a.box_code WHERE pr.po_code=? ORDER BY pr.created_at DESC`)
+    .all(record.po_code)
+    .map(r => ({ ...r, arrival_date: resolvePoArrivalDate(r) }));
   const related_errors = db.prepare('SELECT * FROM error_records WHERE po_code=? AND id!=? ORDER BY created_at DESC').all(record.po_code, record.id);
   const arrival = record.linked_box ? db.prepare('SELECT * FROM arrivals WHERE box_code=? LIMIT 1').get(record.linked_box) : null;
   res.json({ record, po_records, related_errors, arrival });
@@ -923,7 +940,8 @@ app.delete('/api/errors/:id', (req, res) => {
 app.get('/api/box/:code', (req, res) => {
   const code = req.params.code;
   const arrival = db.prepare('SELECT * FROM arrivals WHERE box_code=? LIMIT 1').get(code);
-  const po_records = db.prepare(`SELECT pr.*,(SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count FROM po_records pr WHERE pr.box_code=? ORDER BY pr.created_at`).all(code);
+  const po_records = db.prepare(`SELECT pr.*,(SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count FROM po_records pr WHERE pr.box_code=? ORDER BY pr.created_at`).all(code)
+    .map(r => ({ ...r, arrival_date: resolvePoArrivalDate(r) }));
   const errors = db.prepare('SELECT * FROM error_records WHERE box_code=? ORDER BY created_at').all(code);
   res.json({ box_code:code, arrival, po_records, error_records:errors });
 });

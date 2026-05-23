@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(__dirname, 'server.js');
@@ -144,6 +145,35 @@ test('manual PO no-box upload stores explicit arrival date and appears in PO/err
   const detail = await getJson(`/api/errors/${err.body.id}`);
   assert.equal(detail.status, 200);
   assert.ok(detail.body.po_records.find(p => p.po_code === 'POMCMP028283' && p.arrival_date === '2026-05-20'));
+});
+
+test('PO overview and lookups prefer the upload folder date over cached DB arrival_date', async () => {
+  const fixtureDb = new Database(DB_PATH);
+  fixtureDb.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes)
+    VALUES ('', ?, ?, ?, ?)`)
+    .run('2026-05-19', 'POMCMP028284', '2026-05-20/No box code/POMCMP028284_NOBOXCODE_20260523_183000.jpg', 'stale cached date');
+  fixtureDb.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes)
+    VALUES ('', NULL, ?, ?, ?)`)
+    .run('POMCMP028285', '2026-05-20/No box code/POMCMP028285_NOBOXCODE_20260523_183001.jpg', 'missing cached date');
+  fixtureDb.close();
+
+  const overview = await getJson('/api/po/overview?search=POMCMP02828');
+  assert.equal(overview.status, 200);
+  const day = overview.body.find(g => g.arrival_date === '2026-05-20');
+  assert.ok(day, 'overview should group by the first YYYY-MM-DD photo_path folder');
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028284'));
+  assert.ok(day.pos.find(p => p.po_code === 'POMCMP028285'));
+  assert.equal(overview.body.some(g => g.arrival_date === '2026-05-19' && g.pos.some(p => p.po_code === 'POMCMP028284')), false);
+
+  const all = await getJson('/api/po/all?search=POMCMP028284');
+  assert.equal(all.status, 200);
+  assert.equal(all.body[0].arrival_date, '2026-05-20');
+
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP028284', worker_name: 'qc', error_description: 'folder date lookup' });
+  assert.equal(err.status, 200);
+  const detail = await getJson(`/api/errors/${err.body.id}`);
+  assert.equal(detail.status, 200);
+  assert.ok(detail.body.po_records.find(p => p.po_code === 'POMCMP028284' && p.arrival_date === '2026-05-20'));
 });
 
 test('error PO photos are isolated under Error PO Paper', async () => {
