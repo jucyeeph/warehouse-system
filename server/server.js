@@ -277,6 +277,28 @@ function ensureNoBoxUploadDir(arrivalDate) {
   if (!safeDate) throw new Error('Missing valid arrival date. Cannot save to unknown.');
   return ensureDir(path.join(UPLOADS_DIR, safeDate, 'No box code'));
 }
+function resolveUploadPath(relPath) {
+  const uploadRoot = path.resolve(UPLOADS_DIR);
+  const resolved = path.resolve(uploadRoot, String(relPath || ''));
+  if (resolved !== uploadRoot && resolved.startsWith(uploadRoot + path.sep)) return resolved;
+  throw new Error('Invalid photo path');
+}
+function assertExistingArrivalDate(adate) {
+  const safeDate = normalizeArrivalDate(adate);
+  if (!safeDate) throw new Error('请选择有效到货日期');
+  const exists = db.prepare('SELECT 1 FROM arrivals WHERE arrival_date=? LIMIT 1').get(safeDate);
+  if (!exists) throw new Error('到货日期不存在，请从已有到货日期中选择');
+  return safeDate;
+}
+function buildNoBoxPoPhotoPath(poCode, arrivalDate) {
+  const finalPo = normalizePoCode(poCode);
+  assertValidPoCode(finalPo);
+  const safeDate = normalizeArrivalDate(arrivalDate);
+  if (!safeDate) throw new Error('请选择有效到货日期');
+  const dir = ensureNoBoxUploadDir(safeDate);
+  const filename = `${sanitizeCodeSegment(finalPo, 'NOPO')}_NOBOXCODE_${buildPhotoStamp()}.jpg`;
+  return { absPath: path.join(dir, filename), relPath: `${safeDate}/No box code/${filename}` };
+}
 function getPhotoExt(req) {
   return path.extname(req.file?.originalname || req.body.originalname || '').toLowerCase() || '.jpg';
 }
@@ -895,6 +917,43 @@ app.get('/api/errors', (req, res) => {
   if (po_code)   { sql += ' AND er.po_code LIKE ?';      p.push(`%${po_code}%`); }
   sql += ' ORDER BY er.created_at DESC';
   res.json(db.prepare(sql).all(...p));
+});
+app.post('/api/errors/:id/create-po-record', (req, res) => {
+  let copiedPath = null;
+  try {
+    const errorRecord = db.prepare('SELECT * FROM error_records WHERE id=?').get(req.params.id);
+    if (!errorRecord) return res.status(404).json({ error: '未找到错误订单' });
+    if (!errorRecord.photo_path) return res.status(400).json({ error: '错误订单没有图片，无法录入采购单' });
+
+    const sourcePath = resolveUploadPath(errorRecord.photo_path);
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      return res.status(400).json({ error: '错误订单图片源文件不存在，未创建采购单记录' });
+    }
+
+    const finalPo = normalizePoCode(req.body.po_code || errorRecord.po_code);
+    assertValidPoCode(finalPo);
+    const arrivalDate = assertExistingArrivalDate(req.body.arrival_date);
+    const notes = req.body.notes || `由错误订单 #${errorRecord.id} 一键录入`;
+    const target = buildNoBoxPoPhotoPath(finalPo, arrivalDate);
+
+    fs.copyFileSync(sourcePath, target.absPath);
+    copiedPath = target.absPath;
+
+    let poRecordId;
+    db.transaction(() => {
+      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES('',?,?,?,?)")
+        .run(arrivalDate, finalPo, target.relPath, notes || null);
+      poRecordId = r.lastInsertRowid;
+      const u = db.prepare('UPDATE error_records SET linked_po_record_id=? WHERE id=?').run(poRecordId, errorRecord.id);
+      if (u.changes !== 1) throw new Error('关联错误订单失败');
+    })();
+
+    res.json({ success:true, id:poRecordId, po_record_id:poRecordId, linked_error_id:errorRecord.id, arrival_date:arrivalDate, photo_path:target.relPath });
+  } catch(e) {
+    if (copiedPath) { try { fs.unlinkSync(copiedPath); } catch {} }
+    if (isSqliteConstraintError(e)) return res.status(409).json({ error:'创建采购单失败：数据约束冲突', detail:e.message });
+    res.status(400).json({ error:e.message });
+  }
 });
 app.get('/api/errors/:id', (req, res) => {
   const record = db.prepare(`SELECT er.*, pr.box_code as linked_box, pr.po_code as linked_po_code,

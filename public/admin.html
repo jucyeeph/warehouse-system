@@ -1004,6 +1004,7 @@ function closeDetail(){ document.getElementById('detail-view').classList.remove(
 
 function renderLeft(d){
   const r=d.record;
+  const createPoMeta=JSON.stringify({id:r.id,po_code:r.po_code,photo_path:r.photo_path}).replace(/"/g,'&quot;');
   let lk='';
   if(r.linked_po_record_id) lk=`<div class="lk-banner"><div class="lk-banner-t">🔗 已关联开箱记录</div>
     <div style="font-size:12px;line-height:1.7">
@@ -1022,7 +1023,8 @@ function renderLeft(d){
       <span class="lk">描述</span><span style="line-height:1.5">${r.error_description||'—'}</span>
       <span class="lk">状态</span><span>${statusBadge(r.review_status)}</span>
     </div>${lk}
-    <div style="display:flex;gap:5px;margin-bottom:10px">
+    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="showErrorToPoModal(${createPoMeta})">📋 一键录入采购单</button>
       <button class="btn btn-outline btn-sm" onclick="editError(${r.id},'${r.po_code.replace(/'/g,"\\'")}','${(r.error_description||'').replace(/'/g,"\\'")}')">✏️ 编辑</button>
       <button class="btn btn-danger btn-sm" onclick="deleteError(${r.id})">🗑️ 删除</button>
     </div>
@@ -1080,6 +1082,32 @@ function selMid(id,metaStr){
       ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
       :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
     </div>`;
+}
+async function showErrorToPoModal(record){
+  showEdit('📋 从错误订单录入采购单',`
+    <div class="mfg"><label>采购单号（可修改）</label><input class="inp" id="etp-code" value="${record.po_code||''}" style="width:100%"></div>
+    <div class="mfg"><label>到货日期（只能选已有日期）</label><select class="inp" id="etp-arrival-date" style="width:100%"><option value="">加载中…</option></select></div>
+    <div class="mfg"><label>采购单图片（来自当前错误订单）</label>${record.photo_path?`<img src="/uploads/${record.photo_path}" style="width:100%;height:120px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:zoom-in" onclick="openLB('/uploads/${record.photo_path}')">`:'<div class="empty">当前错误订单没有图片</div>'}</div>
+    <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="etp-notes" rows="2" style="width:100%;height:52px">由错误订单 #${record.id} 一键录入</textarea></div>
+  `,`<button class="btn btn-primary" onclick="submitErrorToPo(${record.id})">✅ 创建并关联</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+  try{
+    const dates=await api('/api/arrivals/dates');
+    const sel=document.getElementById('etp-arrival-date');
+    sel.innerHTML='<option value="">请选择已有到货日期</option>'+dates.map(d=>`<option value="${d.arrival_date}">${d.arrival_date}（${d.count}箱）</option>`).join('');
+    if(!dates.length){ sel.innerHTML='<option value="">暂无可选到货日期</option>'; sel.disabled=true; }
+  }catch{ document.getElementById('etp-arrival-date').innerHTML='<option value="">到货日期加载失败</option>'; }
+}
+async function submitErrorToPo(errId){
+  const po_code=document.getElementById('etp-code').value.trim();
+  const arrival_date=document.getElementById('etp-arrival-date').value;
+  const notes=document.getElementById('etp-notes').value.trim();
+  if(!po_code){toast('请输入采购单号','err');return;}
+  if(!arrival_date){toast('请选择已有到货日期','err');return;}
+  try{
+    const r=await api(`/api/errors/${errId}/create-po-record`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code,arrival_date,notes})});
+    if(r.success){ closeEdit(); toast('✅ 已创建采购单并关联','ok'); loadErrors(); selError(errId); loadStats(); }
+    else toast('❌ '+(r.error||'失败'),'err');
+  }catch{ toast('❌ 网络错误','err'); }
 }
 async function linkToPo(errId,poId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:poId})}); toast('✅ 关联成功','ok'); loadErrors(); selError(errId); }catch{ toast('关联失败','err'); } }
 async function unlinkPo(errId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:null})}); toast('已取消关联','ok'); loadErrors(); selError(errId); }catch{ toast('失败','err'); } }
