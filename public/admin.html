@@ -530,15 +530,17 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
     <div class="modal-title">📋 手动补录采购单</div>
     <div class="mfg"><label>采购单号（必填）</label><input class="inp" id="mpo-code" style="width:100%" placeholder="输入采购单条码"></div>
     <div class="mfg"><label>关联箱码（选填）</label><input class="inp" id="mpo-box" style="width:100%" placeholder="如 20260315DSH001"></div>
+    <div class="mfg"><label>到货日期（无箱码时必填）</label><select class="inp" id="mpo-arrival-date" style="width:100%"><option value="">加载中…</option></select></div>
     <div class="mfg">
       <label>采购单照片（必填）</label>
       <input type="file" id="mpo-photo" accept="image/*" style="display:none" onchange="onMpoPhoto(this)">
       <div id="mpo-ph-ph" onclick="document.getElementById('mpo-photo').click()"
+        ondragover="onMpoDragOver(event)" ondragleave="onMpoDragLeave(event)" ondrop="onMpoDrop(event)"
         style="width:100%;height:90px;background:#f8fafc;border-radius:9px;border:2px dashed var(--border);
           display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;gap:3px">
-        <span style="font-size:24px">📸</span><span style="font-size:12px">点击选择图片</span>
+        <span style="font-size:24px">📸</span><span style="font-size:12px">点击选择或拖拽图片到这里</span>
       </div>
-      <img id="mpo-ph-prev" src="" style="display:none;width:100%;height:90px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mpo-photo').click()">
+      <img id="mpo-ph-prev" src="" style="display:none;width:100%;height:90px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mpo-photo').click()" ondragover="onMpoDragOver(event)" ondragleave="onMpoDragLeave(event)" ondrop="onMpoDrop(event)">
     </div>
     <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="mpo-notes" rows="2" style="width:100%;height:52px"></textarea></div>
     <div class="modal-actions">
@@ -573,7 +575,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 // STATE
 // ════════════════════════════
 let selErrId=null, batchMode=false, batchSel=new Set();
-let importRows=[], mpoPhotoFile=null;
+let importRows=[], mpoPhotoFile=null, mpoArrivalDates=[];
 let tableData=null, arrivalDates=[], selArrDate=null, selShipmentDate=null;
 let shipmentOverview=[], poOverview=[];
 let currentPoGroup=null, currentPoRecord=null;
@@ -1002,6 +1004,7 @@ function closeDetail(){ document.getElementById('detail-view').classList.remove(
 
 function renderLeft(d){
   const r=d.record;
+  const createPoMeta=JSON.stringify({id:r.id,po_code:r.po_code,photo_path:r.photo_path}).replace(/"/g,'&quot;');
   let lk='';
   if(r.linked_po_record_id) lk=`<div class="lk-banner"><div class="lk-banner-t">🔗 已关联开箱记录</div>
     <div style="font-size:12px;line-height:1.7">
@@ -1020,7 +1023,8 @@ function renderLeft(d){
       <span class="lk">描述</span><span style="line-height:1.5">${r.error_description||'—'}</span>
       <span class="lk">状态</span><span>${statusBadge(r.review_status)}</span>
     </div>${lk}
-    <div style="display:flex;gap:5px;margin-bottom:10px">
+    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="showErrorToPoModal(${createPoMeta})">📋 一键录入采购单</button>
       <button class="btn btn-outline btn-sm" onclick="editError(${r.id},'${r.po_code.replace(/'/g,"\\'")}','${(r.error_description||'').replace(/'/g,"\\'")}')">✏️ 编辑</button>
       <button class="btn btn-danger btn-sm" onclick="deleteError(${r.id})">🗑️ 删除</button>
     </div>
@@ -1078,6 +1082,32 @@ function selMid(id,metaStr){
       ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
       :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
     </div>`;
+}
+async function showErrorToPoModal(record){
+  showEdit('📋 从错误订单录入采购单',`
+    <div class="mfg"><label>采购单号（可修改）</label><input class="inp" id="etp-code" value="${record.po_code||''}" style="width:100%"></div>
+    <div class="mfg"><label>到货日期（只能选已有日期）</label><select class="inp" id="etp-arrival-date" style="width:100%"><option value="">加载中…</option></select></div>
+    <div class="mfg"><label>采购单图片（来自当前错误订单）</label>${record.photo_path?`<img src="/uploads/${record.photo_path}" style="width:100%;height:120px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:zoom-in" onclick="openLB('/uploads/${record.photo_path}')">`:'<div class="empty">当前错误订单没有图片</div>'}</div>
+    <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="etp-notes" rows="2" style="width:100%;height:52px">由错误订单 #${record.id} 一键录入</textarea></div>
+  `,`<button class="btn btn-primary" onclick="submitErrorToPo(${record.id})">✅ 创建并关联</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+  try{
+    const dates=await api('/api/arrivals/dates');
+    const sel=document.getElementById('etp-arrival-date');
+    sel.innerHTML='<option value="">请选择已有到货日期</option>'+dates.map(d=>`<option value="${d.arrival_date}">${d.arrival_date}（${d.count}箱）</option>`).join('');
+    if(!dates.length){ sel.innerHTML='<option value="">暂无可选到货日期</option>'; sel.disabled=true; }
+  }catch{ document.getElementById('etp-arrival-date').innerHTML='<option value="">到货日期加载失败</option>'; }
+}
+async function submitErrorToPo(errId){
+  const po_code=document.getElementById('etp-code').value.trim();
+  const arrival_date=document.getElementById('etp-arrival-date').value;
+  const notes=document.getElementById('etp-notes').value.trim();
+  if(!po_code){toast('请输入采购单号','err');return;}
+  if(!arrival_date){toast('请选择已有到货日期','err');return;}
+  try{
+    const r=await api(`/api/errors/${errId}/create-po-record`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code,arrival_date,notes})});
+    if(r.success){ closeEdit(); toast('✅ 已创建采购单并关联','ok'); loadErrors(); selError(errId); loadStats(); }
+    else toast('❌ '+(r.error||'失败'),'err');
+  }catch{ toast('❌ 网络错误','err'); }
 }
 async function linkToPo(errId,poId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:poId})}); toast('✅ 关联成功','ok'); loadErrors(); selError(errId); }catch{ toast('关联失败','err'); } }
 async function unlinkPo(errId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:null})}); toast('已取消关联','ok'); loadErrors(); selError(errId); }catch{ toast('失败','err'); } }
@@ -1210,9 +1240,23 @@ function selectPoRecord(idx){
       <span class="lk">错误订单</span><span>${r.error_count>0?`<span class="badge b-e">已关联 ${r.error_count} 条</span>`:'无'}</span>
     </div>`;
 }
-function showMpoModal(){ mpoPhotoFile=null; ['mpo-code','mpo-box','mpo-notes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('mpo-ph-prev').style.display='none'; document.getElementById('mpo-ph-ph').style.display='flex'; document.getElementById('mpo-modal').classList.add('show'); setTimeout(()=>document.getElementById('mpo-code').focus(),100); }
-function onMpoPhoto(inp){ if(!inp.files[0])return; mpoPhotoFile=inp.files[0]; const fr=new FileReader(); fr.onload=e=>{document.getElementById('mpo-ph-prev').src=e.target.result;document.getElementById('mpo-ph-prev').style.display='block';document.getElementById('mpo-ph-ph').style.display='none';}; fr.readAsDataURL(inp.files[0]); }
-async function submitMpo(){ const code=document.getElementById('mpo-code').value.trim(); const box=document.getElementById('mpo-box').value.trim(); const notes=document.getElementById('mpo-notes').value.trim(); if(!code){toast('请输入采购单号','err');return;} if(!mpoPhotoFile){toast('请选择照片','err');return;} const fd=new FormData(); fd.append('po_code',code); fd.append('notes',notes); if(box) fd.append('box_code',box); fd.append('photo',mpoPhotoFile); try{ const r=await fetch('/api/po-record/manual',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){toast(`✅ ${code} 已补录`,'ok');document.getElementById('mpo-modal').classList.remove('show');loadPoAll();}else toast('❌ '+(r.error||'失败'),'err'); }catch{toast('❌ 网络错误','err');} }
+async function loadMpoArrivalDates(){
+  const sel=document.getElementById('mpo-arrival-date');
+  sel.innerHTML='<option value="">加载中…</option>';
+  try{
+    mpoArrivalDates=await api('/api/arrivals/dates');
+    sel.innerHTML='<option value="">请选择已有到货日期</option>'+mpoArrivalDates.map(d=>`<option value="${d.arrival_date}">${d.arrival_date}（${d.count}箱）</option>`).join('');
+    sel.disabled=mpoArrivalDates.length===0;
+    if(!mpoArrivalDates.length) sel.innerHTML='<option value="">暂无可选到货日期</option>';
+  }catch{ sel.innerHTML='<option value="">到货日期加载失败</option>'; }
+}
+function showMpoModal(){ mpoPhotoFile=null; ['mpo-code','mpo-box','mpo-notes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('mpo-arrival-date').value=''; document.getElementById('mpo-ph-prev').style.display='none'; document.getElementById('mpo-ph-ph').style.display='flex'; document.getElementById('mpo-ph-ph').style.borderColor='var(--border)'; document.getElementById('mpo-modal').classList.add('show'); loadMpoArrivalDates(); setTimeout(()=>document.getElementById('mpo-code').focus(),100); }
+function setMpoPhoto(file){ if(!file)return; if(!file.type.startsWith('image/')){toast('只能上传图片文件','err');return;} mpoPhotoFile=file; const fr=new FileReader(); fr.onload=e=>{document.getElementById('mpo-ph-prev').src=e.target.result;document.getElementById('mpo-ph-prev').style.display='block';document.getElementById('mpo-ph-ph').style.display='none';document.getElementById('mpo-ph-ph').style.borderColor='var(--border)';}; fr.readAsDataURL(file); }
+function onMpoPhoto(inp){ setMpoPhoto(inp.files[0]); }
+function onMpoDragOver(e){ e.preventDefault(); document.getElementById('mpo-ph-ph').style.borderColor='var(--primary)'; }
+function onMpoDragLeave(e){ e.preventDefault(); document.getElementById('mpo-ph-ph').style.borderColor='var(--border)'; }
+function onMpoDrop(e){ e.preventDefault(); document.getElementById('mpo-ph-ph').style.borderColor='var(--border)'; const f=e.dataTransfer.files[0]; setMpoPhoto(f); }
+async function submitMpo(){ const code=document.getElementById('mpo-code').value.trim(); const box=document.getElementById('mpo-box').value.trim(); const adate=document.getElementById('mpo-arrival-date').value; const notes=document.getElementById('mpo-notes').value.trim(); if(!code){toast('请输入采购单号','err');return;} if(!box&&!adate){toast('未填写箱码时必须选择到货日期','err');return;} if(!mpoPhotoFile){toast('请选择照片','err');return;} const fd=new FormData(); fd.append('po_code',code); fd.append('notes',notes); if(box) fd.append('box_code',box); if(adate) fd.append('arrival_date',adate); fd.append('photo',mpoPhotoFile); try{ const r=await fetch('/api/po-record/manual',{method:'POST',body:fd}).then(r=>r.json()); if(r.success){toast(`✅ ${code} 已补录`,'ok');document.getElementById('mpo-modal').classList.remove('show');loadPoAll();loadStats();}else toast('❌ '+(r.error||'失败'),'err'); }catch{toast('❌ 网络错误','err');} }
 
 // ════════════════════════════
 // IMPORT
