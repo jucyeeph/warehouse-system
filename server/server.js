@@ -149,7 +149,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_arrivals_box  ON arrivals(box_code);
   CREATE INDEX IF NOT EXISTS idx_arrivals_date ON arrivals(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_box        ON po_records(box_code);
-  CREATE INDEX IF NOT EXISTS idx_po_arrival   ON po_records(arrival_date);
   CREATE INDEX IF NOT EXISTS idx_po_code       ON po_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_po        ON error_records(po_code);
   CREATE INDEX IF NOT EXISTS idx_err_status    ON error_records(review_status);
