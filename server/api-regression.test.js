@@ -247,6 +247,9 @@ test('PO overview and lookups prefer the upload folder date over cached DB arriv
 
 test('fs-sync preview scans folder PO images without writing DB and reports exceptions', async () => {
   writeUpload('2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg');
+  writeUpload('2026-05-20/No box code/POMCMPFSB001_NOBOXCODE_20260520_120000.jpg');
+  writeUpload('2026-05-20/20260520DSH001/POMCMPFSB002_20260520DSH001_20260520_120001.jpg');
+  writeUpload('2026-05-20/No box code/BADNAME_20260520_120002.jpg');
   writeUpload('2026-05-20/No box code/BAD_NOBOXCODE_20260520_144644.jpg');
   writeUpload('not-a-date/No box code/POMCMP028399_NOBOXCODE_20260520_144644.jpg');
   writeUpload('Error PO Paper/POMCMP028398_error_20260520_144644.jpg');
@@ -259,6 +262,9 @@ test('fs-sync preview scans folder PO images without writing DB and reports exce
   assert.equal(preview.status, 200);
   assert.equal(preview.body.success, true);
   assert.ok(preview.body.records.find(r => r.photo_path === '2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg'));
+  assert.equal(preview.body.records.find(r => r.photo_path === '2026-05-20/No box code/POMCMPFSB001_NOBOXCODE_20260520_120000.jpg')?.po_code, 'POMCMPFSB001');
+  assert.equal(preview.body.records.find(r => r.photo_path === '2026-05-20/20260520DSH001/POMCMPFSB002_20260520DSH001_20260520_120001.jpg')?.po_code, 'POMCMPFSB002');
+  assert.ok(preview.body.unrecognized_files.find(r => r.photo_path === '2026-05-20/No box code/BADNAME_20260520_120002.jpg'));
   assert.ok(preview.body.unrecognized_files.find(r => r.photo_path === '2026-05-20/No box code/BAD_NOBOXCODE_20260520_144644.jpg'));
   assert.equal(preview.body.records.some(r => r.photo_path.includes('not-a-date')), false);
   assert.equal(preview.body.records.some(r => r.photo_path.startsWith('Error PO Paper/')), false);

@@ -369,7 +369,7 @@ function parseFsSyncBoxFolder(folderName) {
 }
 function parseFsSyncPoFilename(filename) {
   const base = path.basename(String(filename || ''));
-  const m = base.match(/^(POMCMP\d{6})(?:[_\-]|\b)/i);
+  const m = base.match(/^(POMCMP[A-Z0-9]{6})(?:[_\-]|\b)/i);
   return m ? normalizePoCode(m[1]) : null;
 }
 function makeFsSyncSummary(items, warnings = []) {
