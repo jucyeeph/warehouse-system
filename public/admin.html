@@ -128,13 +128,15 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   font-weight:700;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .dp-body{flex:1;overflow-y:auto;padding:12px;min-height:0}
 .dp-scroll{flex:1;overflow-y:auto;min-height:0}
-.error-detail-main{display:grid;grid-template-columns:minmax(220px,38%) minmax(0,1fr);gap:12px;min-height:100%}
+.error-detail-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,38%);gap:12px;min-height:100%}
 .error-photo-rail{min-height:0;display:flex;flex-direction:column}
 .detail-img{width:100%;height:100%;min-height:420px;border-radius:9px;object-fit:contain;
   border:1px solid var(--border);cursor:zoom-in;background:#f8fafc;display:block}
 .no-detail-img{height:100%;min-height:420px;background:#f8fafc;border-radius:9px;border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
 .error-info-stack{min-width:0;overflow:auto;padding-right:2px}
+.preview-main{display:grid;grid-template-columns:minmax(150px,42%) minmax(0,1fr);gap:12px;min-height:100%}
+.preview-photo-rail{min-height:0;display:flex;flex-direction:column}
 .ig{display:grid;grid-template-columns:74px 1fr;gap:4px 8px;font-size:12px;margin-bottom:10px}
 .ig .lk{color:var(--muted);font-weight:600;align-self:start;padding-top:1px}
 .po-thumb{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);
@@ -150,8 +152,9 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 .ti img{width:100%;height:100%;object-fit:cover}
 .tc{font-family:monospace;font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px}
 .tm{font-size:11px;color:var(--muted);line-height:1.6}
-.preview-img{width:100%;border-radius:9px;object-fit:contain;max-height:240px;
+.preview-img{width:100%;height:100%;min-height:420px;border-radius:9px;object-fit:contain;
   border:1px solid var(--border);cursor:zoom-in;background:#f8fafc;display:block}
+.preview-placeholder{width:100%;height:100%;min-height:420px;background:#f8fafc;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:32px}
 .mg{display:grid;grid-template-columns:84px 1fr;gap:4px 8px;font-size:12px;margin-top:10px}
 .mg .lk{color:var(--muted);font-weight:600}
 .review-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:11px;margin-top:10px}
@@ -427,13 +430,13 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
           <div class="dp-hd"><span>📌 错误详情</span><button class="btn btn-ghost btn-sm" onclick="closeDetail()">✕ 关闭</button></div>
           <div class="dp-body" id="dp-left"><div class="empty"><div class="empty-ic">👈</div>选择上方记录</div></div>
         </div>
-        <div class="dp" style="flex:.95">
-          <div class="dp-hd" id="mid-title">📋 同采购单开箱记录</div>
-          <div class="dp-scroll" id="dp-mid"><div class="empty"><div class="empty-ic">📭</div>暂无</div></div>
-        </div>
         <div class="dp" style="flex:1">
           <div class="dp-hd">🔍 图片预览 / 关联信息</div>
           <div class="dp-body" id="dp-right"><div class="empty"><div class="empty-ic">👈</div>点击中间列表</div></div>
+        </div>
+        <div class="dp" style="flex:.95">
+          <div class="dp-hd" id="mid-title">📋 同采购单开箱记录</div>
+          <div class="dp-scroll" id="dp-mid"><div class="empty"><div class="empty-ic">📭</div>暂无</div></div>
         </div>
       </div>
       <div class="resolved-section" id="resolved-section" style="display:none">
@@ -1146,9 +1149,6 @@ function renderLeft(d){
     <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:7px" onclick="unlinkPo(${r.id})">🔓 取消关联</button></div>`;
   document.getElementById('dp-left').innerHTML=`
     <div class="error-detail-main">
-      <div class="error-photo-rail">
-        ${r.photo_path?`<img class="detail-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="no-detail-img">无照片</div>'}
-      </div>
       <div class="error-info-stack">
         <div class="ig">
           <span class="lk">采购单码</span><span class="code" style="font-size:13px">${r.po_code}</span>
@@ -1179,6 +1179,9 @@ function renderLeft(d){
           <button class="btn btn-success" style="width:100%;height:30px" onclick="saveReview(${r.id})">💾 保存审核</button>
         </div>
       </div>
+      <div class="error-photo-rail">
+        ${r.photo_path?`<img class="detail-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="no-detail-img">无照片</div>'}
+      </div>
     </div>
   `;
 }
@@ -1208,12 +1211,15 @@ function renderMid(d){
 function selMid(id,metaStr){
   document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
   let meta; try{meta=typeof metaStr==='object'?metaStr:JSON.parse(metaStr.replace(/&quot;/g,'"'));}catch{meta={};}
-  const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div style="width:100%;height:160px;background:#f8fafc;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:32px">${meta.type==='err'?'⚠️':'📄'}</div>`;
-  document.getElementById('dp-right').innerHTML=`${imgHtml}
-    <div class="mg">
-      <span class="lk">采购单码</span><span class="code">${meta.po_code}</span>
-      ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
-      :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
+  const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div class="preview-placeholder">${meta.type==='err'?'⚠️':'📄'}</div>`;
+  document.getElementById('dp-right').innerHTML=`
+    <div class="preview-main">
+      <div class="preview-photo-rail">${imgHtml}</div>
+      <div class="mg">
+        <span class="lk">采购单码</span><span class="code">${meta.po_code}</span>
+        ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
+        :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
+      </div>
     </div>`;
 }
 async function showErrorToPoModal(record){
