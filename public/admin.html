@@ -1223,25 +1223,18 @@ function renderMid(d){
   }
 }
 function selMid(id,metaStr){
-  currentMidId=null;
   document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
   let meta; try{meta=typeof metaStr==='object'?metaStr:JSON.parse(metaStr.replace(/&quot;/g,'"'));}catch{meta={};}
-  // Find the .po-thumb that was clicked and highlight it
-  const thumbs=document.querySelectorAll('.po-thumb[data-mid-idx]');
-  for(const th of thumbs){
-    const onclick=th.getAttribute('onclick')||'';
-    const idStr=String(id);
-    if(onclick.includes('selMid('+idStr+',')||onclick.includes('selMid(-'+idStr.slice(1))){th.classList.add('sel');th.scrollIntoView({block:'nearest'});break;}
+  // Find idx in midItems by id
+  const idx=midItems.findIndex(item=>item.id===id);
+  currentMidId=idx>=0?idx:null;
+  if(idx>=0){
+    const el=document.querySelector(`.po-thumb[data-mid-idx="${idx}"]`);
+    if(el){el.classList.add('sel');el.scrollIntoView({block:'nearest'});}
   }
-  // Also find by data-mid-idx if midItems populated
-  const clickedThumb=document.querySelector('.po-thumb.sel');
-  if(clickedThumb){const idx=parseInt(clickedThumb.getAttribute('data-mid-idx'));if(!isNaN(idx)&&midItems[idx]){currentMidId=idx;}}
-  // Middle panel: only image preview, no text info
+  // Middle panel: only image preview, no text info, single column
   const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div class="preview-placeholder">${meta.type==='err'?'⚠️':'📄'}</div>`;
-  document.getElementById('dp-right').innerHTML=`
-    <div class="preview-main">
-      <div class="preview-photo-rail">${imgHtml}</div>
-    </div>`;
+  document.getElementById('dp-right').innerHTML=`<div style="height:100%;display:flex;flex-direction:column">${imgHtml}</div>`;
 }
 async function showErrorToPoModal(record){
   showEdit('📋 从错误订单录入采购单',`
@@ -1483,17 +1476,19 @@ document.addEventListener('keydown',function(e){
   if(e.key!=='ArrowDown'&&e.key!=='ArrowUp') return;
   e.preventDefault();
   if(!midItems.length) return;
-  let idx=currentMidId??(e.key==='ArrowDown'?0:midItems.length-1);
-  if(e.key==='ArrowDown'){idx=Math.min(idx+1,midItems.length-1);}
-  else{idx=Math.max(idx-1,0);}
+  let idx;
+  if(currentMidId===null){
+    // No selection yet: Down→first, Up→last
+    idx=e.key==='ArrowDown'?0:midItems.length-1;
+  }else{
+    idx=e.key==='ArrowDown'?Math.min(currentMidId+1,midItems.length-1):Math.max(currentMidId-1,0);
+  }
   currentMidId=idx;
   const item=midItems[idx];
   if(!item) return;
-  // Highlight
   document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
   const el=document.querySelector(`.po-thumb[data-mid-idx="${idx}"]`);
   if(el){el.classList.add('sel');el.scrollIntoView({block:'nearest'});}
-  // Call selMid with stored meta
   selMid(item.id,item.meta);
 });
 
