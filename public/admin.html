@@ -694,6 +694,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 // STATE
 // ════════════════════════════
 let selErrId=null, batchMode=false, batchSel=new Set();
+let currentMidId=null, midItems=[];
 let importRows=[], mpoPhotoFile=null, mpoArrivalDates=[];
 let tableData=null, arrivalDates=[], selArrDate=null, selShipmentDate=null;
 let shipmentOverview=[], poOverview=[];
@@ -1187,39 +1188,59 @@ function renderLeft(d){
 }
 function renderMid(d){
   document.getElementById('mid-title').textContent=`📋 采购单 ${d.record.po_code} 开箱记录`;
+  // Build midItems array for keyboard nav
+  midItems=[];
   let html='';
   if(d.po_records?.length){
     html+=`<div style="padding:7px 12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#f8fafc;border-bottom:1px solid var(--border)">开箱记录（${d.po_records.length}条）—点击关联</div>`;
-    html+=d.po_records.map(p=>`
-      <div class="po-thumb compact" onclick="selMid(${p.id},${JSON.stringify({type:'po',po_code:p.po_code,box_code:p.box_code||'—',created_at:p.created_at,arrival_date:p.arrival_date||'—',photo_path:p.photo_path,error_count:p.error_count||0}).replace(/"/g,'&quot;')})">
+    html+=d.po_records.map(p=>{
+      midItems.push({id:p.id,meta:{type:'po',po_code:p.po_code,box_code:p.box_code||'—',created_at:p.created_at,arrival_date:p.arrival_date||'—',photo_path:p.photo_path,error_count:p.error_count||0}});
+      const idx=midItems.length-1;
+      return `
+      <div class="po-thumb compact" data-mid-idx="${idx}" onclick="selMid(${p.id},${JSON.stringify({type:'po',po_code:p.po_code,box_code:p.box_code||'—',created_at:p.created_at,arrival_date:p.arrival_date||'—',photo_path:p.photo_path,error_count:p.error_count||0}).replace(/"/g,'&quot;')})">
         <div style="flex:1;min-width:0">
           <div class="tc">${p.po_code} <span style="color:var(--muted);font-family:inherit;font-weight:600">箱码 ${p.box_code||'—'}</span></div>
           <div class="tm"><div>到货 ${p.arrival_date||'—'}</div><div>开箱 ${p.created_at}</div>${p.error_count>0?`<div><span class="badge b-e">⚠️${p.error_count}错误</span></div>`:''}<div><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();linkToPo(${d.record.id},${p.id})">${d.record.linked_po_record_id===p.id?'✅ 已关联':'🔗 关联'}</button></div></div>
         </div>
-      </div>`).join('');
+      </div>`;}).join('');
   }
   if(d.related_errors?.length){
     html+=`<div style="padding:7px 12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#fff7ed;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">其他同名错误（${d.related_errors.length}条）</div>`;
-    html+=d.related_errors.map(e=>`
-      <div class="po-thumb compact" onclick="selMid(-${e.id},${JSON.stringify({type:'err',po_code:e.po_code,created_at:e.created_at,photo_path:e.photo_path,review_status:e.review_status,error_description:e.error_description||'—'}).replace(/"/g,'&quot;')})">
+    html+=d.related_errors.map(e=>{
+      midItems.push({id:-e.id,meta:{type:'err',po_code:e.po_code,created_at:e.created_at,photo_path:e.photo_path,review_status:e.review_status,error_description:e.error_description||'—'}});
+      const idx=midItems.length-1;
+      return `
+      <div class="po-thumb compact" data-mid-idx="${idx}" onclick="selMid(-${e.id},${JSON.stringify({type:'err',po_code:e.po_code,created_at:e.created_at,photo_path:e.photo_path,review_status:e.review_status,error_description:e.error_description||'—'}).replace(/"/g,'&quot;')})">
         <div><div class="tc">${e.po_code}</div><div class="tm"><div>${e.created_at}</div><div>${statusBadge(e.review_status)}</div><div>${e.error_description||'—'}</div></div></div>
-      </div>`).join('');
+      </div>`;}).join('');
   }
   if(!html) html='<div class="empty"><div class="empty-ic">📭</div>无相关开箱记录</div>';
   document.getElementById('dp-mid').innerHTML=html;
+  // Restore selection after re-render
+  if(currentMidId!==null){
+    const el=document.querySelector(`.po-thumb[data-mid-idx="${currentMidId}"]`);
+    if(el) el.classList.add('sel');
+  }
 }
 function selMid(id,metaStr){
+  currentMidId=null;
   document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
   let meta; try{meta=typeof metaStr==='object'?metaStr:JSON.parse(metaStr.replace(/&quot;/g,'"'));}catch{meta={};}
+  // Find the .po-thumb that was clicked and highlight it
+  const thumbs=document.querySelectorAll('.po-thumb[data-mid-idx]');
+  for(const th of thumbs){
+    const onclick=th.getAttribute('onclick')||'';
+    const idStr=String(id);
+    if(onclick.includes('selMid('+idStr+',')||onclick.includes('selMid(-'+idStr.slice(1))){th.classList.add('sel');th.scrollIntoView({block:'nearest'});break;}
+  }
+  // Also find by data-mid-idx if midItems populated
+  const clickedThumb=document.querySelector('.po-thumb.sel');
+  if(clickedThumb){const idx=parseInt(clickedThumb.getAttribute('data-mid-idx'));if(!isNaN(idx)&&midItems[idx]){currentMidId=idx;}}
+  // Middle panel: only image preview, no text info
   const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div class="preview-placeholder">${meta.type==='err'?'⚠️':'📄'}</div>`;
   document.getElementById('dp-right').innerHTML=`
     <div class="preview-main">
       <div class="preview-photo-rail">${imgHtml}</div>
-      <div class="mg">
-        <span class="lk">采购单码</span><span class="code">${meta.po_code}</span>
-        ${meta.type==='po'?`<span class="lk">箱码</span><span class="code">${meta.box_code||'—'}</span><span class="lk">📦到货</span><span style="color:var(--success);font-weight:600">${meta.arrival_date}</span><span class="lk">📂开箱</span><span>${meta.created_at}</span>${meta.error_count>0?`<span class="lk">错误</span><span class="badge b-e">关联${meta.error_count}条</span>`:''}`
-        :`<span class="lk">时间</span><span>${meta.created_at}</span><span class="lk">描述</span><span style="color:var(--muted)">${meta.error_description||'—'}</span><span class="lk">状态</span><span>${statusBadge(meta.review_status)}</span>`}
-      </div>
     </div>`;
 }
 async function showErrorToPoModal(record){
@@ -1454,6 +1475,28 @@ async function doDbImport(inp){ if(!inp.files[0])return; const fd=new FormData()
 // ════════════════════════════
 // INIT
 // ════════════════════════════
+// Keyboard navigation for error detail right panel (ArrowUp/Down)
+document.addEventListener('keydown',function(e){
+  if(!document.getElementById('detail-view').classList.contains('on')) return;
+  const tag=document.activeElement?.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+  if(e.key!=='ArrowDown'&&e.key!=='ArrowUp') return;
+  e.preventDefault();
+  if(!midItems.length) return;
+  let idx=currentMidId??(e.key==='ArrowDown'?0:midItems.length-1);
+  if(e.key==='ArrowDown'){idx=Math.min(idx+1,midItems.length-1);}
+  else{idx=Math.max(idx-1,0);}
+  currentMidId=idx;
+  const item=midItems[idx];
+  if(!item) return;
+  // Highlight
+  document.querySelectorAll('.po-thumb').forEach(el=>el.classList.remove('sel'));
+  const el=document.querySelector(`.po-thumb[data-mid-idx="${idx}"]`);
+  if(el){el.classList.add('sel');el.scrollIntoView({block:'nearest'});}
+  // Call selMid with stored meta
+  selMid(item.id,item.meta);
+});
+
 loadStats();
 resetShipmentForm();
 goTab('box');
