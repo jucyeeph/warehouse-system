@@ -128,14 +128,14 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   font-weight:700;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .dp-body{flex:1;overflow-y:auto;padding:12px;min-height:0}
 .dp-scroll{flex:1;overflow-y:auto;min-height:0}
-.error-detail-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,38%);gap:12px;min-height:100%}
+.error-detail-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,48%);gap:12px;min-height:100%}
 .error-photo-rail{min-height:0;display:flex;flex-direction:column}
 .detail-img{width:100%;height:100%;min-height:420px;border-radius:9px;object-fit:contain;
   border:1px solid var(--border);cursor:zoom-in;background:#f8fafc;display:block}
 .no-detail-img{height:100%;min-height:420px;background:#f8fafc;border-radius:9px;border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
 .error-info-stack{min-width:0;overflow:auto;padding-right:2px}
-.preview-main{display:grid;grid-template-columns:minmax(150px,42%) minmax(0,1fr);gap:12px;min-height:100%}
+.preview-main{display:grid;grid-template-columns:minmax(300px,48%) minmax(0,1fr);gap:12px;min-height:100%}
 .preview-photo-rail{min-height:0;display:flex;flex-direction:column}
 .ig{display:grid;grid-template-columns:74px 1fr;gap:4px 8px;font-size:12px;margin-bottom:10px}
 .ig .lk{color:var(--muted);font-weight:600;align-self:start;padding-top:1px}
@@ -432,7 +432,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
         </div>
         <div class="dp" style="flex:1">
           <div class="dp-hd">🔍 图片预览 / 关联信息</div>
-          <div class="dp-body" id="dp-right"><div class="empty"><div class="empty-ic">👈</div>点击中间列表</div></div>
+          <div class="dp-body" id="dp-right"><div class="empty"><div class="empty-ic">👉</div>点击右边列表</div></div>
         </div>
         <div class="dp" style="flex:.95">
           <div class="dp-hd" id="mid-title">📋 同采购单开箱记录</div>
@@ -1130,7 +1130,7 @@ async function selError(id){
   try{
     const d=await api(`/api/errors/${id}`);
     renderLeft(d); renderMid(d);
-    document.getElementById('dp-right').innerHTML='<div class="empty"><div class="empty-ic">👈</div>点击中间列表</div>';
+    document.getElementById('dp-right').innerHTML='<div class="empty"><div class="empty-ic">👉</div>点击右边列表</div>';
   }catch{ document.getElementById('dp-left').innerHTML='<div class="empty">加载失败</div>'; }
 }
 function closeDetail(){ document.getElementById('detail-view').classList.remove('on'); selErrId=null; document.querySelectorAll('.erow').forEach(r=>r.classList.remove('sel')); }
