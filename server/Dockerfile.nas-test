@@ -5,8 +5,7 @@
 FROM warehouse-nasb-warehouse-admin:latest
 
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --no-save sharp@^0.34.5
 
 COPY server.js thumbnail-service.js thumbnails-cli.js ./
 
