@@ -352,14 +352,14 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 </div>
 <div class="fbar" id="fb-errors">
   <span class="flbl">状态</span>
-  <select class="inp" id="ef-status" onchange="loadErrors()" style="width:90px">
+  <select class="inp" id="ef-status" onchange="errPage=1;loadErrors()" style="width:90px">
     <option value="">全部</option><option value="pending">待审核</option>
     <option value="reviewed">已审核</option><option value="resolved">已解决</option>
   </select>
   <span class="flbl">日期</span>
-  <input type="date" class="inp" id="ef-from" onchange="loadErrors()" style="width:130px">
+  <input type="date" class="inp" id="ef-from" onchange="errPage=1;loadErrors()" style="width:130px">
   <span style="color:var(--muted);font-size:12px">至</span>
-  <input type="date" class="inp" id="ef-to" onchange="loadErrors()" style="width:130px">
+  <input type="date" class="inp" id="ef-to" onchange="errPage=1;loadErrors()" style="width:130px">
   <input class="inp" id="ef-po" placeholder="采购单码" style="width:130px" oninput="debErr()">
   <button class="btn btn-ghost" onclick="clearEF()">清除</button>
   <span id="err-cnt" style="font-size:12px;color:var(--muted)"></span>
@@ -372,7 +372,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 <div class="fbar" id="fb-po">
   <input class="inp" id="po-inp" placeholder="按采购单码筛选…" style="width:200px" oninput="debPo()">
   <span class="flbl">排序</span>
-  <select class="inp" id="po-sort" onchange="loadPoAll()" style="width:120px">
+  <select class="inp" id="po-sort" onchange="poPage=1;loadPoAll()" style="width:120px">
     <option value="created_at_DESC">开箱时间↓</option><option value="created_at_ASC">开箱时间↑</option>
     <option value="po_code_ASC">单号A→Z</option><option value="po_code_DESC">单号Z→A</option>
   </select>
@@ -659,7 +659,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
           display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;gap:3px">
         <span style="font-size:24px">📸</span><span style="font-size:12px">点击选择或拖拽图片到这里</span>
       </div>
-      <img id="mpo-ph-prev" src="" style="display:none;width:100%;height:90px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mpo-photo').click()" ondragover="onMpoDragOver(event)" ondragleave="onMpoDragLeave(event)" ondrop="onMpoDrop(event)">
+      <img id="mpo-ph-prev" src="" loading="lazy" decoding="async" style="display:none;width:100%;height:90px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mpo-photo').click()" ondragover="onMpoDragOver(event)" ondragleave="onMpoDragLeave(event)" ondrop="onMpoDrop(event)">
     </div>
     <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="mpo-notes" rows="2" style="width:100%;height:52px"></textarea></div>
     <div class="modal-actions">
@@ -686,7 +686,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 </div>
 
 <!-- Lightbox -->
-<div class="lightbox" id="lightbox" onclick="closeLB()"><img id="lb-img" src=""></div>
+<div class="lightbox" id="lightbox" onclick="closeLB()"><img id="lb-img" src="" decoding="async"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -698,6 +698,7 @@ let currentMidId=null, midItems=[];
 let importRows=[], mpoPhotoFile=null, mpoArrivalDates=[];
 let tableData=null, arrivalDates=[], selArrDate=null, selShipmentDate=null;
 let shipmentOverview=[], poOverview=[];
+let errPage=1, errPageSize=50, errTotal=0, poPage=1, poPageSize=50, poTotal=0;
 let currentPoGroup=null, currentPoRecord=null;
 let cellPopupCode=null;
 
@@ -755,12 +756,35 @@ function showEdit(title,body,actions){
   document.getElementById('editModal').classList.add('show');
 }
 function closeEdit(){ document.getElementById('editModal').classList.remove('show'); }
+function uploadUrl(photoPath){
+  return '/uploads/'+String(photoPath||'').split('/').map(encodeURIComponent).join('/');
+}
+function thumbnailUrl(photoPath){
+  return '/thumbnails/uploads/'+String(photoPath||'').split('/').map(encodeURIComponent).join('/')+'.webp';
+}
+function photoImg(photoPath,{className='',style=''}={}){
+  if(!photoPath) return '';
+  const original=uploadUrl(photoPath);
+  const thumb=thumbnailUrl(photoPath);
+  return `<img ${className?`class="${className}"`:''} src="${thumb}" data-original="${original}" loading="lazy" decoding="async" ${style?`style="${style}"`:''} onclick="event.stopPropagation();openLB('${original}')" onerror="thumbFail(this)">`;
+}
+function thumbFail(img){
+  const original=img.dataset.original;
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='btn btn-outline btn-sm';
+  btn.textContent='查看原图';
+  btn.style.width='100%';
+  btn.style.minHeight='32px';
+  btn.onclick=(event)=>{ event.stopPropagation(); openLB(original); };
+  img.replaceWith(btn);
+}
 
 async function loadStats(){
   try{
     const d=await api('/api/arrivals/dates');
     const total=d.reduce((s,x)=>s+x.count,0);
-    const pending=(await api('/api/errors?status=pending')).length;
+    const pending=(await api('/api/errors?status=pending&page=1&pageSize=1')).total || 0;
     document.getElementById('stats-hdr').innerHTML=`
       <div class="sc">累计到货 <b>${total}</b></div>
       <div class="sc ${pending>0?'alert':''}">待审错误 <b>${pending}</b></div>
@@ -972,7 +996,7 @@ async function showBoxSide(code){
               <button class="btn btn-danger btn-sm" onclick="deletePoRecord(${p.id})">🗑️</button>
             </div>
           </div>
-          ${p.photo_path?`<img src="/uploads/${p.photo_path}" style="width:100%;height:75px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in" onclick="openLB('/uploads/${p.photo_path}')">`:''}
+          ${p.photo_path?photoImg(p.photo_path,{style:'width:100%;height:75px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in'}):''}
           <div style="font-size:11px;color:var(--muted)">${p.created_at}</div>
           ${p.error_count>0?`<span class="badge b-e" style="margin-top:3px">⚠️ ${p.error_count}错误</span>`:''}
         </div>`).join('')||'<div style="color:var(--muted);font-size:12px">无开箱记录</div>'}
@@ -984,7 +1008,7 @@ async function showBoxSide(code){
               <span class="code" style="font-size:13px">${e.po_code}</span>
               <button class="btn btn-danger btn-sm" onclick="deleteError(${e.id})">🗑️</button>
             </div>
-            ${e.photo_path?`<img src="/uploads/${e.photo_path}" style="width:100%;height:65px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in" onclick="openLB('/uploads/${e.photo_path}')">`:''}
+            ${e.photo_path?photoImg(e.photo_path,{style:'width:100%;height:65px;object-fit:cover;border-radius:6px;margin-bottom:4px;cursor:zoom-in'}):''}
             <div style="font-size:11px;color:var(--muted)">${e.created_at}</div>
             <div style="margin-top:3px">${statusBadge(e.review_status)}</div>
           </div>`).join('')}
@@ -1075,9 +1099,10 @@ async function applyBatch(){
 // ════════════════════════════
 // ERROR REVIEW
 // ════════════════════════════
-function clearEF(){ ['ef-status','ef-from','ef-to','ef-po'].forEach(id=>document.getElementById(id).value=''); loadErrors(); }
+function clearEF(){ ['ef-status','ef-from','ef-to','ef-po'].forEach(id=>document.getElementById(id).value=''); errPage=1; loadErrors(); }
 let eDbt;
-function debErr(){ clearTimeout(eDbt); eDbt=setTimeout(loadErrors,400); }
+function debErr(){ clearTimeout(eDbt); eDbt=setTimeout(()=>{errPage=1;loadErrors();},400); }
+function setErrPage(page){ errPage=Math.max(1,page); loadErrors(); }
 
 async function loadErrors(){
   const p=new URLSearchParams();
@@ -1086,11 +1111,15 @@ async function loadErrors(){
   const to=document.getElementById('ef-to').value;
   const po=document.getElementById('ef-po').value.trim();
   if(st) p.set('status',st); if(fr) p.set('date_from',fr); if(to) p.set('date_to',to); if(po) p.set('po_code',po);
+  p.set('page',errPage); p.set('pageSize',errPageSize);
   const tbody=document.getElementById('err-tbody');
   tbody.innerHTML='<tr><td colspan="7" class="loading">加载中…</td></tr>';
   try{
-    const list=await api('/api/errors?'+p);
-    document.getElementById('err-cnt').textContent=`共${list.length}条`;
+    const data=await api('/api/errors?'+p);
+    const list=data.items||[];
+    errTotal=data.total||0;
+    const pageCount=Math.max(1,Math.ceil(errTotal/errPageSize));
+    document.getElementById('err-cnt').innerHTML=`共${errTotal}条　第${errPage}/${pageCount}页 <button class="btn btn-ghost btn-sm" onclick="setErrPage(${errPage-1})" ${errPage<=1?'disabled':''}>上一页</button> <button class="btn btn-ghost btn-sm" onclick="setErrPage(${errPage+1})" ${data.hasMore?'':'disabled'}>下一页</button>`;
     const active=list.filter(e=>e.review_status!=='resolved');
     const resolved=list.filter(e=>e.review_status==='resolved');
     tbody.innerHTML=active.length ? active.map(errorRowHtml).join('') : '<tr><td colspan="7" class="empty">无待处理记录；已解决记录在下方</td></tr>';
@@ -1124,6 +1153,8 @@ function errorRowHtml(e){
 
 async function selError(id){
   selErrId=id;
+  currentMidId=null;
+  midItems=[];
   document.querySelectorAll('.erow').forEach(r=>r.classList.remove('sel'));
   document.querySelectorAll('.erow').forEach(r=>{ if(r.getAttribute('onclick')?.includes(`(${id})`)) r.classList.add('sel'); });
   document.getElementById('detail-view').classList.add('on');
@@ -1145,7 +1176,7 @@ function renderLeft(d){
       <div>箱码：<span class="code">${r.linked_box||'—'}</span></div>
       <div>采购单：<span class="code">${r.linked_po_code||'—'}</span></div>
       <div>开箱：${r.linked_unboxing_date||'—'}</div>
-      ${r.linked_photo_path?`<img src="/uploads/${r.linked_photo_path}" style="width:100%;height:55px;object-fit:cover;border-radius:6px;margin-top:4px;cursor:zoom-in" onclick="openLB('/uploads/${r.linked_photo_path}')">`:''}
+      ${r.linked_photo_path?photoImg(r.linked_photo_path,{style:'width:100%;height:55px;object-fit:cover;border-radius:6px;margin-top:4px;cursor:zoom-in'}):''}
     </div>
     <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:7px" onclick="unlinkPo(${r.id})">🔓 取消关联</button></div>`;
   document.getElementById('dp-left').innerHTML=`
@@ -1181,7 +1212,7 @@ function renderLeft(d){
         </div>
       </div>
       <div class="error-photo-rail">
-        ${r.photo_path?`<img class="detail-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="no-detail-img">无照片</div>'}
+        ${r.photo_path?photoImg(r.photo_path,{className:'detail-img'}):'<div class="no-detail-img">无照片</div>'}
       </div>
     </div>
   `;
@@ -1233,14 +1264,14 @@ function selMid(id,metaStr){
     if(el){el.classList.add('sel');el.scrollIntoView({block:'nearest'});}
   }
   // Middle panel: only image preview, no text info, single column
-  const imgHtml=meta.photo_path?`<img class="preview-img" src="/uploads/${meta.photo_path}" onclick="openLB('/uploads/${meta.photo_path}')">`:`<div class="preview-placeholder">${meta.type==='err'?'⚠️':'📄'}</div>`;
+  const imgHtml=meta.photo_path?photoImg(meta.photo_path,{className:'preview-img'}):`<div class="preview-placeholder">${meta.type==='err'?'⚠️':'📄'}</div>`;
   document.getElementById('dp-right').innerHTML=`<div style="height:100%;display:flex;flex-direction:column">${imgHtml}</div>`;
 }
 async function showErrorToPoModal(record){
   showEdit('📋 从错误订单录入采购单',`
     <div class="mfg"><label>采购单号（可修改）</label><input class="inp" id="etp-code" value="${record.po_code||''}" style="width:100%"></div>
     <div class="mfg"><label>到货日期（只能选已有日期）</label><select class="inp" id="etp-arrival-date" style="width:100%"><option value="">加载中…</option></select></div>
-    <div class="mfg"><label>采购单图片（来自当前错误订单）</label>${record.photo_path?`<img src="/uploads/${record.photo_path}" style="width:100%;height:120px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:zoom-in" onclick="openLB('/uploads/${record.photo_path}')">`:'<div class="empty">当前错误订单没有图片</div>'}</div>
+    <div class="mfg"><label>采购单图片（来自当前错误订单）</label>${record.photo_path?photoImg(record.photo_path,{style:'width:100%;height:120px;object-fit:cover;border-radius:9px;border:1px solid var(--border);cursor:zoom-in'}):'<div class="empty">当前错误订单没有图片</div>'}</div>
     <div class="mfg"><label>备注（选填）</label><textarea class="inp" id="etp-notes" rows="2" style="width:100%;height:52px">由错误订单 #${record.id} 一键录入</textarea></div>
   `,`<button class="btn btn-primary" onclick="submitErrorToPo(${record.id})">✅ 创建并关联</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
   try{
@@ -1345,15 +1376,23 @@ function revokeShipmentBatch(id){ showConfirm('确认撤回这次发货提交？
 // PO MANAGER
 // ════════════════════════════
 let poDbt;
-function debPo(){ clearTimeout(poDbt); poDbt=setTimeout(loadPoAll,350); }
+function debPo(){ clearTimeout(poDbt); poDbt=setTimeout(()=>{poPage=1;loadPoAll();},350); }
+function setPoPage(page){ poPage=Math.max(1,page); loadPoAll(); }
 async function loadPoAll(){
   const search=document.getElementById('po-inp').value.trim();
+  const sortValue=document.getElementById('po-sort').value;
+  const dir=sortValue.endsWith('_ASC')?'ASC':'DESC';
+  const sort=sortValue.replace(/_(ASC|DESC)$/,'');
+  const p=new URLSearchParams({page:String(poPage),pageSize:String(poPageSize),sort,dir});
+  if(search) p.set('search',search);
   const el=document.getElementById('po-result');
   el.innerHTML='<div class="loading">加载中…</div>';
   try{
-    poOverview=await api('/api/po/overview'+(search?`?search=${encodeURIComponent(search)}`:''));
-    const count=poOverview.reduce((s,g)=>s+g.pos.length,0);
-    document.getElementById('po-count').textContent=`共${count}个采购单号`;
+    const data=await api('/api/po/overview?'+p);
+    poOverview=data.items||[];
+    poTotal=data.total||0;
+    const pageCount=Math.max(1,Math.ceil(poTotal/poPageSize));
+    document.getElementById('po-count').innerHTML=`共${poTotal}条　第${poPage}/${pageCount}页 <button class="btn btn-ghost btn-sm" onclick="setPoPage(${poPage-1})" ${poPage<=1?'disabled':''}>上一页</button> <button class="btn btn-ghost btn-sm" onclick="setPoPage(${poPage+1})" ${data.hasMore?'':'disabled'}>下一页</button>`;
     el.innerHTML=`<div class="po3">
       <div class="po-pane"><div class="po-pane-hd">到货日期 → 当天采购单号</div><div class="po-pane-bd" id="po-left"></div></div>
       <div class="po-pane"><div class="po-pane-hd">图片列表</div><div class="po-pane-bd" id="po-mid"><div class="empty"><div class="empty-ic">👈</div>点击左侧采购单号</div></div></div>
@@ -1383,7 +1422,7 @@ function selectPoRecord(idx){
   currentPoRecord=idx;
   document.querySelectorAll('#po-mid .po-file-item').forEach((el,i)=>el.classList.toggle('on',i===idx));
   const r=currentPoGroup.records[idx];
-  document.getElementById('po-right').innerHTML=`${r.photo_path?`<img class="po-preview-img" src="/uploads/${r.photo_path}" onclick="openLB('/uploads/${r.photo_path}')">`:'<div class="empty"><div class="empty-ic">📄</div>无图片</div>'}
+  document.getElementById('po-right').innerHTML=`${r.photo_path?photoImg(r.photo_path,{className:'po-preview-img'}):'<div class="empty"><div class="empty-ic">📄</div>无图片</div>'}
     <div class="mg" style="margin-top:12px">
       <span class="lk">采购单号</span><span class="code">${r.po_code}</span>
       <span class="lk">到货日期</span><span>${currentPoGroup.arrival_date||'—'}</span>

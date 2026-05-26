@@ -5,15 +5,18 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const XLSX = require('xlsx');
+const { startThumbnailScanner } = require('./thumbnail-service');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || './data/warehouse.db';
 const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/uploads';
+const THUMBNAILS_DIR = process.env.THUMBNAILS_DIR || './data/thumbnails';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || '/public';
 
 if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(THUMBNAILS_DIR)) fs.mkdirSync(THUMBNAILS_DIR, { recursive: true });
 
 function parseBoxCode(code) {
   const m = String(code).trim().toUpperCase().match(/^(\d{8})([A-Z0-9]+?)(\d{3})$/);
@@ -357,6 +360,11 @@ function buildPhotoStamp() {
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
+function getPagination(query, defaultPageSize=50, maxPageSize=100) {
+  const page = Math.max(parseInt(query.page, 10) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || defaultPageSize, 1), maxPageSize);
+  return { page, pageSize, offset: (page - 1) * pageSize };
+}
 
 const FS_SYNC_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
 const FS_SYNC_SKIP_DIRS = new Set(['Error PO Paper']);
@@ -510,8 +518,25 @@ function getPhotoPath(req) {
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
-app.use('/uploads', express.static(UPLOADS_DIR));
-app.use(express.static(PUBLIC_DIR));
+app.use('/thumbnails', express.static(THUMBNAILS_DIR, {
+  maxAge: '30d',
+  immutable: true,
+  fallthrough: true
+}));
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  maxAge: '7d',
+  fallthrough: true
+}));
+app.use(express.static(PUBLIC_DIR, {
+  etag: true,
+  lastModified: true,
+  maxAge: '1h',
+  setHeaders(res, filePath) {
+    if (path.extname(filePath).toLowerCase() === '.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 app.get('/api/health', (req,res) => res.json({ status:'ok' }));
 
 // ════════════════════════════════════════
@@ -996,15 +1021,25 @@ app.get('/api/po/all', (req, res) => {
 });
 app.get('/api/po/overview', (req, res) => {
   const search = String(req.query.search || '').trim();
+  const paginated = Object.prototype.hasOwnProperty.call(req.query, 'page') || Object.prototype.hasOwnProperty.call(req.query, 'pageSize');
+  const { page, pageSize, offset } = getPagination(req.query, 50, 100);
+  const sortParam = String(req.query.sort || 'created_at');
+  const dir = String(req.query.dir || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
+  const orderCol = validSort[sortParam] || 'pr.created_at';
   let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.arrival_date, pr.photo_path, pr.notes, pr.created_at,
     a.arrival_date as box_arrival_date,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr
     LEFT JOIN arrivals a ON a.box_code=pr.box_code`;
+  let countSql = 'SELECT COUNT(*) as total FROM po_records pr';
   const params = [];
-  if (search) { sql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
-  sql += ' ORDER BY pr.po_code ASC, pr.created_at ASC';
-  const rows = db.prepare(sql).all(...params);
+  if (search) { sql += ' WHERE pr.po_code LIKE ?'; countSql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
+  const total = db.prepare(countSql).get(...params).total;
+  sql += paginated
+    ? ` ORDER BY ${orderCol} ${dir}, pr.id ${dir} LIMIT ? OFFSET ?`
+    : ' ORDER BY pr.po_code ASC, pr.created_at ASC';
+  const rows = paginated ? db.prepare(sql).all(...params, pageSize, offset) : db.prepare(sql).all(...params);
   const byDate = {};
   for (const row of rows) {
     const resolvedArrivalDate = resolvePoArrivalDate(row);
@@ -1021,7 +1056,8 @@ app.get('/api/po/overview', (req, res) => {
     arrival_date: g.arrival_date,
     pos: Object.values(g.po_map).sort((a,b)=>a.po_code.localeCompare(b.po_code))
   })).sort((a,b)=>String(b.arrival_date).localeCompare(String(a.arrival_date)));
-  res.json(result);
+  if (!paginated) return res.json(result);
+  res.json({ items: result, total, page, pageSize, hasMore: offset + rows.length < total });
 });
 
 // ════════════════════════════════════════
@@ -1043,14 +1079,25 @@ app.post('/api/error', (req, res) => {
 });
 app.get('/api/errors', (req, res) => {
   const { status, date_from, date_to, po_code } = req.query;
+  const paginated = Object.prototype.hasOwnProperty.call(req.query, 'page') || Object.prototype.hasOwnProperty.call(req.query, 'pageSize');
+  const { page, pageSize, offset } = getPagination(req.query, 50, 100);
   let sql = `SELECT er.*, pr.box_code as linked_box FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
+  let countSql = `SELECT COUNT(*) as total FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
   const p = [];
-  if (status)    { sql += ' AND er.review_status=?';     p.push(status); }
-  if (date_from) { sql += ' AND date(er.created_at)>=?'; p.push(date_from); }
-  if (date_to)   { sql += ' AND date(er.created_at)<=?'; p.push(date_to); }
-  if (po_code)   { sql += ' AND er.po_code LIKE ?';      p.push(`%${po_code}%`); }
-  sql += ' ORDER BY er.created_at DESC';
-  res.json(db.prepare(sql).all(...p));
+  function addWhere(clause, value) {
+    sql += clause;
+    countSql += clause;
+    p.push(value);
+  }
+  if (status)    addWhere(' AND er.review_status=?', status);
+  if (date_from) addWhere(' AND date(er.created_at)>=?', date_from);
+  if (date_to)   addWhere(' AND date(er.created_at)<=?', date_to);
+  if (po_code)   addWhere(' AND er.po_code LIKE ?', `%${po_code}%`);
+  const total = db.prepare(countSql).get(...p).total;
+  sql += paginated ? ' ORDER BY er.created_at DESC LIMIT ? OFFSET ?' : ' ORDER BY er.created_at DESC';
+  const items = paginated ? db.prepare(sql).all(...p, pageSize, offset) : db.prepare(sql).all(...p);
+  if (!paginated) return res.json(items);
+  res.json({ items, total, page, pageSize, hasMore: offset + items.length < total });
 });
 app.post('/api/errors/:id/create-po-record', (req, res) => {
   let copiedPath = null;
@@ -1312,4 +1359,9 @@ app.post('/api/db/import', xlsUpload.single('file'), (req, res) => {
   } catch(e) { res.status(400).json({ error:e.message }); }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`[仓库系统] 端口 ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[仓库系统] 端口 ${PORT}`);
+  if (process.env.DISABLE_THUMBNAIL_SCANNER !== '1' && process.env.NODE_ENV !== 'test') {
+    startThumbnailScanner({ uploadsDir: UPLOADS_DIR, thumbnailsDir: THUMBNAILS_DIR });
+  }
+});
