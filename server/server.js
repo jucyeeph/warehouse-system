@@ -1361,7 +1361,7 @@ app.post('/api/db/import', xlsUpload.single('file'), (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[仓库系统] 端口 ${PORT}`);
-  if (process.env.DISABLE_THUMBNAIL_SCANNER !== '1' && process.env.NODE_ENV !== 'test') {
+  if (process.env.DISABLE_THUMBNAIL_SCANNER !== '1') {
     startThumbnailScanner({ uploadsDir: UPLOADS_DIR, thumbnailsDir: THUMBNAILS_DIR });
   }
 });

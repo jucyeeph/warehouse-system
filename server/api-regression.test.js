@@ -80,7 +80,7 @@ function assertNoUnknownUploads() {
 test.before(async () => {
   child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, NODE_ENV: 'test', PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
+    env: { ...process.env, NODE_ENV: 'test', DISABLE_THUMBNAIL_SCANNER: '1', PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   child.stdout.on('data', d => process.stdout.write(String(d)));

@@ -5,7 +5,10 @@
 FROM warehouse-nasb-warehouse-admin:latest
 
 WORKDIR /app
-COPY server.js .
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev
+
+COPY server.js thumbnail-service.js thumbnails-cli.js ./
 
 EXPOSE 3000
 CMD ["node", "server.js"]

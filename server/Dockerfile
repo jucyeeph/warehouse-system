@@ -8,7 +8,7 @@ RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json* ./
 RUN npm install --production
 
-COPY server.js .
+COPY server.js thumbnail-service.js thumbnails-cli.js ./
 
 EXPOSE 3000
 
