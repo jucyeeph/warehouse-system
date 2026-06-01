@@ -297,6 +297,45 @@ test('fs-sync apply indexes Error PO Paper images into error records', async () 
   checkDb.close();
 });
 
+test('error folder alignment treats Error PO Paper as source of truth including Solved', async () => {
+  const activeRel = 'Error PO Paper/POMCMP030463_error_20260513_141440.jpg';
+  const solvedRel = 'Error PO Paper/Solved/solved_20260513_151500《POMCMP030464_20260501DSH029_20260513_101337.jpg》.jpg';
+  const staleRel = 'Error PO Paper/POMCMP030465_error_20260510_090000.jpg';
+  writeUpload(activeRel);
+  writeUpload(solvedRel);
+
+  const fixtureDb = new Database(DB_PATH);
+  fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030464', staleRel, 'pending', '2026-05-01 00:00:00', 'old-index');
+  fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030466', 'Error PO Paper/POMCMP030466_error_20260510_090000.jpg', 'pending', '2026-05-10 09:00:00', 'old-index');
+  fixtureDb.close();
+
+  const preview = await getJson('/api/fs-sync/errors-preview');
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.success, true);
+  assert.ok(preview.body.to_add >= 1);
+  assert.ok(preview.body.to_update >= 1);
+  assert.ok(preview.body.to_remove >= 1);
+
+  const aligned = await postJson('/api/fs-sync/errors-apply', {});
+  assert.equal(aligned.status, 200);
+  assert.equal(aligned.body.success, true);
+
+  const checkDb = new Database(DB_PATH);
+  const active = checkDb.prepare('SELECT po_code, review_status, created_at FROM error_records WHERE photo_path=?').get(activeRel);
+  assert.equal(active.po_code, 'POMCMP030463');
+  assert.equal(active.review_status, 'pending');
+  assert.equal(active.created_at, '2026-05-13 14:14:40');
+  const solved = checkDb.prepare('SELECT po_code, review_status, created_at FROM error_records WHERE photo_path=?').get(solvedRel);
+  assert.equal(solved.po_code, 'POMCMP030464');
+  assert.equal(solved.review_status, 'resolved');
+  assert.equal(solved.created_at, '2026-05-13 15:15:00');
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM error_records WHERE photo_path=?').get(staleRel).c, 0);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM error_records WHERE po_code=?').get('POMCMP030466').c, 0);
+  checkDb.close();
+});
+
 test('fs-sync apply inserts no-box PO records and skips duplicate photo_path', async () => {
   const rel = '2026-05-20/No box code/POMCMP028302_NOBOXCODE_20260520_144644.png';
   writeUpload(rel);
@@ -415,6 +454,33 @@ test('resolved error records are renamed and archived under Error PO Paper/Solve
   const row = checkDb.prepare('SELECT review_status, photo_path FROM error_records WHERE id=?').get(err.body.id);
   assert.equal(row.review_status, 'resolved');
   assert.equal(row.photo_path, reviewedBody.photo_path);
+  checkDb.close();
+});
+
+test('resolved review archives from folder source when DB path is stale', async () => {
+  const activeRel = 'Error PO Paper/POMCMP030467_error_20260513_161700.jpg';
+  writeUpload(activeRel);
+  const fixtureDb = new Database(DB_PATH);
+  const id = fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030467', 'Error PO Paper/missing_20260513_161700.jpg', 'reviewed', '2026-05-01 00:00:00', 'old-index').lastInsertRowid;
+  fixtureDb.close();
+
+  const reviewed = await fetch(`http://127.0.0.1:${PORT}/api/errors/${id}/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_status: 'resolved', review_notes: 'done', reviewed_by: 'tester' })
+  });
+  const reviewedBody = await reviewed.json();
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewedBody.archived, true);
+  assert.equal(fs.existsSync(path.join(UPLOADS_DIR, activeRel)), false);
+  assert.equal(fs.existsSync(path.join(UPLOADS_DIR, reviewedBody.photo_path)), true);
+
+  const checkDb = new Database(DB_PATH);
+  const row = checkDb.prepare('SELECT review_status, photo_path, created_at FROM error_records WHERE id=?').get(id);
+  assert.equal(row.review_status, 'resolved');
+  assert.equal(row.photo_path, reviewedBody.photo_path);
+  assert.equal(row.created_at, '2026-05-13 16:17:00');
   checkDb.close();
 });
 

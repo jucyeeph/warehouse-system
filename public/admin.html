@@ -363,6 +363,8 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   <input class="inp" id="ef-po" placeholder="采购单码" style="width:130px" oninput="debErr()">
   <button class="btn btn-ghost" onclick="clearEF()">清除</button>
   <span id="err-cnt" style="font-size:12px;color:var(--muted)"></span>
+  <div style="flex:1"></div>
+  <button class="btn btn-outline" onclick="previewErrorFsSync()">🔎 对齐错误订单文件夹</button>
 </div>
 <div class="fbar" id="fb-shipments">
   <span style="font-size:12px;color:var(--muted)">录入厂家发货记录并生成连续箱号</span>
@@ -1296,7 +1298,7 @@ async function submitErrorToPo(errId){
 async function linkToPo(errId,poId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:poId})}); toast('✅ 关联成功','ok'); loadErrors(); selError(errId); }catch{ toast('关联失败','err'); } }
 async function unlinkPo(errId){ try{ await api(`/api/errors/${errId}/link-po`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_record_id:null})}); toast('已取消关联','ok'); loadErrors(); selError(errId); }catch{ toast('失败','err'); } }
 async function quickRev(id,status){ try{ await api(`/api/errors/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({review_status:status,reviewed_by:'管理员'})}); toast('✅','ok'); loadErrors(); if(selErrId===id) selError(id); }catch{ toast('失败','err'); } }
-async function saveReview(id){ const status=document.getElementById('rev-status').value; const notes=document.getElementById('rev-notes').value.trim(); try{ await api(`/api/errors/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({review_status:status,review_notes:notes,reviewed_by:'管理员'})}); toast('✅ 已保存','ok'); loadErrors(); }catch{ toast('失败','err'); } }
+async function saveReview(id){ const status=document.getElementById('rev-status').value; const notes=document.getElementById('rev-notes').value.trim(); try{ await api(`/api/errors/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({review_status:status,review_notes:notes,reviewed_by:'管理员'})}); toast('✅ 已保存','ok'); await loadErrors(); if(selErrId===id) selError(id); }catch{ toast('失败','err'); } }
 function editError(id,poc,desc){ showEdit('✏️ 编辑错误记录',`<div class="mfg"><label>采购单码</label><input class="inp" id="ee-poc" value="${poc}" style="width:100%"></div><div class="mfg"><label>描述</label><textarea class="inp" id="ee-desc" rows="2" style="width:100%;height:58px">${desc}</textarea></div>`,`<button class="btn btn-primary" onclick="saveEditErr(${id})">保存</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`); }
 async function saveEditErr(id){ const poc=document.getElementById('ee-poc').value.trim(); const desc=document.getElementById('ee-desc').value.trim(); if(!poc){toast('不能为空','err');return;} try{ await api(`/api/errors/${id}/edit`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_code:poc,error_description:desc})}); closeEdit(); toast('✅','ok'); loadErrors(); if(selErrId===id) selError(id); }catch{ toast('失败','err'); } }
 function deleteError(id){ showConfirm('确认删除此错误记录？',async()=>{ try{ await api(`/api/errors/${id}`,{method:'DELETE'}); toast('✅','ok'); loadErrors(); closeDetail(); }catch{ toast('失败','err'); } }); }
@@ -1468,6 +1470,39 @@ async function applyFsSync(){
     await loadErrors();
     loadStats();
   }catch{toast('❌ 同步失败','err');}
+}
+async function previewErrorFsSync(){
+  try{
+    toast('正在对齐 Error PO Paper 文件夹…');
+    const r=await api('/api/fs-sync/errors-preview');
+    if(!r.success){toast('❌ '+(r.error||'扫描失败'),'err');return;}
+    const warn=(r.warnings||[]).slice(0,8).map(w=>`<div>• ${esc(w.photo_path||'')} <span style="color:var(--muted)">${esc(w.reason||'')}</span></div>`).join('') || '<div style="color:var(--muted)">无</div>';
+    showEdit('对齐错误订单文件夹',`
+      <div style="font-size:13px;line-height:1.7;color:var(--text)">
+        <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px">
+          以 <b>Error PO Paper</b> 和 <b>Error PO Paper/Solved</b> 文件夹为准重建错误订单索引。文件夹里没有的旧索引会被移除；Solved 内文件会标记为已解决。
+        </div>
+        <div class="stats-row" style="grid-template-columns:repeat(5,1fr);margin-bottom:10px">
+          <div class="stat-card"><div class="sv" style="color:var(--primary)">${r.folder_files||0}</div><div class="sl">文件夹文件</div></div>
+          <div class="stat-card"><div class="sv">${r.db_indexed||0}</div><div class="sl">当前索引</div></div>
+          <div class="stat-card"><div class="sv" style="color:var(--success)">${r.to_add||0}</div><div class="sl">将新增</div></div>
+          <div class="stat-card"><div class="sv" style="color:var(--warning)">${r.to_update||0}</div><div class="sl">将更新</div></div>
+          <div class="stat-card"><div class="sv" style="color:var(--danger)">${r.to_remove||0}</div><div class="sl">将移除</div></div>
+        </div>
+        <div style="font-weight:700;margin-top:8px">无法识别文件（前8条）</div><div style="font-size:12px;color:var(--danger);max-height:120px;overflow:auto">${warn}</div>
+      </div>`,
+      `<button class="btn btn-primary" onclick="applyErrorFsSync()">✅ 确认对齐</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+  }catch{toast('❌ 对齐扫描失败','err');}
+}
+async function applyErrorFsSync(){
+  try{
+    const r=await api('/api/fs-sync/errors-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    if(!r.success){toast('❌ '+(r.error||'对齐失败'),'err');return;}
+    closeEdit();
+    toast(`✅ 错误订单索引已对齐：新增${r.inserted||0}，更新${r.updated||0}，移除${r.removed||0}`,'ok');
+    await loadErrors();
+    loadStats();
+  }catch{toast('❌ 对齐失败','err');}
 }
 async function loadMpoArrivalDates(){
   const sel=document.getElementById('mpo-arrival-date');
