@@ -1445,8 +1445,9 @@ async function previewFsSync(){
         <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px">
           只根据 <b>uploads 文件夹</b> 补充数据库索引，<b>不会移动、改名或删除文件</b>。
         </div>
-        <div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px">
+        <div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">
           <div class="stat-card"><div class="sv" style="color:var(--success)">${r.new_po_records||0}</div><div class="sl">将新增采购单</div></div>
+          <div class="stat-card"><div class="sv" style="color:var(--danger)">${r.new_error_records||0}</div><div class="sl">将新增错误订单</div></div>
           <div class="stat-card"><div class="sv" style="color:var(--primary)">${r.arrivals_to_supplement||0}</div><div class="sl">将补 arrivals</div></div>
           <div class="stat-card"><div class="sv" style="color:var(--warning)">${r.existing_skipped||0}</div><div class="sl">已存在跳过</div></div>
         </div>
@@ -1454,7 +1455,7 @@ async function previewFsSync(){
         <div style="font-weight:700;margin-top:8px">无法识别文件（前8条）</div><div style="font-size:12px;color:var(--danger);max-height:120px;overflow:auto">${exc}</div>
         <div style="font-weight:700;margin-top:8px">重复 / 已存在文件（前8条）</div><div style="font-size:12px;color:var(--muted);max-height:120px;overflow:auto">${dup}</div>
       </div>`,
-      `<button class="btn btn-primary" ${r.new_po_records?'' :'disabled'} onclick="applyFsSync()">✅ 确认补 DB 索引</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
+      `<button class="btn btn-primary" ${(r.new_po_records||r.new_error_records)?'' :'disabled'} onclick="applyFsSync()">✅ 确认补 DB 索引</button><button class="btn btn-ghost" onclick="closeEdit()">取消</button>`);
   }catch{toast('❌ 扫描失败','err');}
 }
 async function applyFsSync(){
@@ -1462,8 +1463,9 @@ async function applyFsSync(){
     const r=await api('/api/fs-sync/po-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
     if(!r.success){toast('❌ '+(r.error||'同步失败'),'err');return;}
     closeEdit();
-    toast(`✅ 已补索引：采购单${r.inserted_po_records||0}条，arrivals ${r.supplemented_arrivals||0}条`,'ok');
+    toast(`✅ 已补索引：采购单${r.inserted_po_records||0}条，错误订单${r.inserted_error_records||0}条，arrivals ${r.supplemented_arrivals||0}条`,'ok');
     await loadPoAll();
+    await loadErrors();
     loadStats();
   }catch{toast('❌ 同步失败','err');}
 }
