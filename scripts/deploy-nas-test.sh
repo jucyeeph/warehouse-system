@@ -58,13 +58,14 @@ redact_output() {
 expect_scp() {
   local source_file="$1"
   local target_file="$2"
-  SOURCE_FILE="$source_file" TARGET_FILE="$target_file" expect <<'EXPECT'
-set timeout -1
-spawn scp -P $env(NAS_PORT) -o StrictHostKeyChecking=no -o ConnectTimeout=15 -- $env(SOURCE_FILE) "$env(NAS_USER)@$env(NAS_HOST):$env(TARGET_FILE)"
+SOURCE_FILE="$source_file" TARGET_FILE="$target_file" expect <<'EXPECT'
+set timeout 600
+spawn scp -O -P $env(NAS_PORT) -o StrictHostKeyChecking=no -o ConnectTimeout=15 -- $env(SOURCE_FILE) "$env(NAS_USER)@$env(NAS_HOST):$env(TARGET_FILE)"
 expect {
   -re "(?i)are you sure.*yes/no" { send -- "yes\r"; exp_continue }
-  -re "(?i)password:" { send -- "$env(NAS_PASSWORD)\r"; exp_continue }
-  eof
+  -re "(?i).*assword:" { send -- "$env(NAS_PASSWORD)\r"; exp_continue }
+  timeout { exit 124 }
+  eof {}
 }
 catch wait result
 exit [lindex $result 3]
@@ -73,13 +74,14 @@ EXPECT
 
 expect_ssh() {
   local remote_cmd="$1"
-  REMOTE_CMD="$remote_cmd" expect <<'EXPECT'
-set timeout -1
+REMOTE_CMD="$remote_cmd" expect <<'EXPECT'
+set timeout 900
 spawn ssh -tt -p $env(NAS_PORT) -o StrictHostKeyChecking=no -o ConnectTimeout=15 -- "$env(NAS_USER)@$env(NAS_HOST)" $env(REMOTE_CMD)
 expect {
   -re "(?i)are you sure.*yes/no" { send -- "yes\r"; exp_continue }
-  -re "(?i)password:" { send -- "$env(NAS_PASSWORD)\r"; exp_continue }
-  eof
+  -re "(?i).*assword:" { send -- "$env(NAS_PASSWORD)\r"; exp_continue }
+  timeout { exit 124 }
+  eof {}
 }
 catch wait result
 exit [lindex $result 3]
@@ -126,14 +128,8 @@ echo "[部署B] 启动 Docker 测试端..."
 expect_ssh "
 set -e
 cd '${NAS_DIR}'
-if command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE_BIN=\"\$(command -v docker-compose)\"
-elif [ -x /usr/local/bin/docker-compose ]; then
-  COMPOSE_BIN=/usr/local/bin/docker-compose
-else
-  COMPOSE_BIN=\"docker compose\"
-fi
-sudo \${COMPOSE_BIN} -f '${COMPOSE_FILE}' up -d --build
+echo '[部署B] 远端 Docker 命令开始'
+sudo -S /usr/local/bin/docker-compose -f '${COMPOSE_FILE}' up -d --build
 " 2>&1 | redact_output
 
 echo "[部署B] 等待服务启动并检查健康状态..."
