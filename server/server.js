@@ -5,15 +5,18 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const XLSX = require('xlsx');
+const { startThumbnailScanner } = require('./thumbnail-service');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || './data/warehouse.db';
 const UPLOADS_DIR = process.env.UPLOADS_DIR || './data/uploads';
+const THUMBNAILS_DIR = process.env.THUMBNAILS_DIR || './data/thumbnails';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || '/public';
 
 if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(THUMBNAILS_DIR)) fs.mkdirSync(THUMBNAILS_DIR, { recursive: true });
 
 function parseBoxCode(code) {
   const m = String(code).trim().toUpperCase().match(/^(\d{8})([A-Z0-9]+?)(\d{3})$/);
@@ -243,6 +246,20 @@ function resolvePoArrivalDate(row) {
     || normalizeArrivalDate(row?.group_arrival_date)
     || null;
 }
+function localTimestamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function dbTimestampFromPhotoName(photoPath, fallback = localTimestamp()) {
+  const base = path.basename(String(photoPath || ''));
+  const m = base.match(/(?:^|_)(\d{8})_(\d{6})(?=[^0-9]|$)/);
+  if (!m) return fallback;
+  const date = normalizeArrivalDate(m[1]);
+  if (!date) return fallback;
+  const t = m[2];
+  return `${date} ${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}`;
+}
 function normalizePoCode(input) { return String(input || '').trim().toUpperCase(); }
 function isValidPoCode(input) { return /^POMCMP\d{6}$/.test(normalizePoCode(input)); }
 function looksLikePoCode(input) { return /^POMCMP/i.test(String(input || '').trim()); }
@@ -353,13 +370,25 @@ function resolvePoUploadMeta(req, { allowArrivalDateFallback=false } = {}) {
   };
 }
 function buildPhotoStamp() {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const ts = localTimestamp();
+  const [date, time] = ts.split(' ');
+  return `${date.replaceAll('-', '')}_${time.replaceAll(':', '')}`;
+}
+function photoStampFromDbTimestamp(ts) {
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return buildPhotoStamp();
+  return `${m[1]}${m[2]}${m[3]}_${m[4]}${m[5]}${m[6]}`;
+}
+function getPagination(query, defaultPageSize=50, maxPageSize=100) {
+  const page = Math.max(parseInt(query.page, 10) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || defaultPageSize, 1), maxPageSize);
+  return { page, pageSize, offset: (page - 1) * pageSize };
 }
 
 const FS_SYNC_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
-const FS_SYNC_SKIP_DIRS = new Set(['Error PO Paper']);
+function isErrorPoPaperDir(name) {
+  return /^Error PO Paper$/i.test(String(name || '').trim());
+}
 function parseFsSyncBoxFolder(folderName) {
   const raw = String(folderName || '').trim();
   if (!raw || raw.startsWith('.')) return null;
@@ -372,22 +401,38 @@ function parseFsSyncPoFilename(filename) {
   const m = base.match(/^(POMCMP[A-Z0-9]{6})(?:[_\-]|\b)/i);
   return m ? normalizePoCode(m[1]) : null;
 }
+function parseErrorPoFilename(filename) {
+  const base = path.basename(String(filename || ''));
+  const m = base.match(/(POMCMP[A-Z0-9]{6})/i);
+  return m ? normalizePoCode(m[1]) : null;
+}
+function isErrorPhotoPath(relPath) {
+  return /^Error PO Paper(?:\/|$)/i.test(String(relPath || '').replaceAll(path.sep, '/'));
+}
+function isSolvedErrorPhotoPath(relPath) {
+  return /^Error PO Paper\/Solved\//i.test(String(relPath || '').replaceAll(path.sep, '/'));
+}
 function makeFsSyncSummary(items, warnings = []) {
   const eligible = items.filter(i => i.status === 'new');
+  const poRecords = eligible.filter(i => i.type === 'po');
+  const errorRecords = eligible.filter(i => i.type === 'error');
   const arrivalKeys = new Set();
-  for (const i of eligible) {
+  for (const i of poRecords) {
     if (i.box_code && (i.arrival_action === 'create' || i.arrival_action === 'update_empty')) {
       arrivalKeys.add(i.box_code);
     }
   }
   return {
     success: true,
-    new_po_records: eligible.length,
+    new_po_records: poRecords.length,
+    new_error_records: errorRecords.length,
     arrivals_to_supplement: arrivalKeys.size,
-    existing_skipped: items.filter(i => i.status === 'existing').length,
+    existing_skipped: items.filter(i => i.status === 'existing' && i.type === 'po').length,
+    existing_error_skipped: items.filter(i => i.status === 'existing' && i.type === 'error').length,
     unrecognized_files: items.filter(i => i.status === 'unrecognized'),
     duplicate_files: items.filter(i => i.status === 'existing'),
-    records: eligible,
+    records: poRecords,
+    error_records: errorRecords,
     warnings
   };
 }
@@ -398,18 +443,44 @@ function scanFsSyncPoFiles() {
   if (!fs.existsSync(uploadRoot)) return makeFsSyncSummary(items, warnings);
   const dateDirs = fs.readdirSync(uploadRoot, { withFileTypes: true });
   const existingPaths = new Set(db.prepare('SELECT photo_path FROM po_records WHERE photo_path IS NOT NULL').all().map(r => String(r.photo_path)));
+  const existingErrorPaths = new Set(db.prepare('SELECT photo_path FROM error_records WHERE photo_path IS NOT NULL').all().map(r => String(r.photo_path)));
   const arrivalByBox = new Map(db.prepare('SELECT box_code, arrival_date FROM arrivals').all().map(r => [String(r.box_code).toUpperCase(), r.arrival_date || null]));
 
   function addUnrecognized(relPath, reason) {
     items.push({ status: 'unrecognized', photo_path: relPath.replaceAll(path.sep, '/'), reason });
   }
+  function scanErrorDir(errorDirName) {
+    const errorAbs = path.join(uploadRoot, errorDirName);
+    for (const ent of fs.readdirSync(errorAbs, { withFileTypes: true })) {
+      if (ent.name.startsWith('.') || ent.isDirectory() || !ent.isFile()) continue;
+      const ext = path.extname(ent.name).toLowerCase();
+      if (!FS_SYNC_IMAGE_EXTS.has(ext)) continue;
+      const relPath = `${errorDirName}/${ent.name}`;
+      const poCode = parseFsSyncPoFilename(ent.name);
+      if (!poCode) { addUnrecognized(relPath, '无法从错误订单文件名前缀解析采购单号'); continue; }
+      if (existingErrorPaths.has(relPath)) {
+        items.push({ type: 'error', status: 'existing', photo_path: relPath, po_code: poCode, reason: 'photo_path 已存在，跳过' });
+        continue;
+      }
+      items.push({
+        type: 'error',
+        status: 'new',
+        photo_path: relPath,
+        po_code: poCode,
+        created_at: dbTimestampFromPhotoName(ent.name),
+        error_description: 'fs-sync',
+        worker_name: '文件夹同步'
+      });
+    }
+  }
   for (const dateDir of dateDirs) {
-    if (!dateDir.isDirectory() || dateDir.name.startsWith('.') || FS_SYNC_SKIP_DIRS.has(dateDir.name)) continue;
+    if (!dateDir.isDirectory() || dateDir.name.startsWith('.')) continue;
+    if (isErrorPoPaperDir(dateDir.name)) { scanErrorDir(dateDir.name); continue; }
     const arrivalDate = normalizeArrivalDate(dateDir.name);
     if (!arrivalDate || arrivalDate !== dateDir.name) continue;
     const dateAbs = path.join(uploadRoot, dateDir.name);
     const stack = fs.readdirSync(dateAbs, { withFileTypes: true })
-      .filter(d => d.isDirectory() && !d.name.startsWith('.') && !FS_SYNC_SKIP_DIRS.has(d.name))
+      .filter(d => d.isDirectory() && !d.name.startsWith('.') && !isErrorPoPaperDir(d.name))
       .map(d => ({ abs: path.join(dateAbs, d.name), relParts: [dateDir.name, d.name], boxFolder: d.name }));
     while (stack.length) {
       const cur = stack.pop();
@@ -429,7 +500,7 @@ function scanFsSyncPoFiles() {
         const poCode = parseFsSyncPoFilename(ent.name);
         if (!poCode) { addUnrecognized(relPath, '无法从文件名前缀解析采购单号'); continue; }
         if (existingPaths.has(relPath)) {
-          items.push({ status: 'existing', photo_path: relPath, po_code: poCode, box_code: boxCode, arrival_date: arrivalDate, reason: 'photo_path 已存在，跳过' });
+          items.push({ type: 'po', status: 'existing', photo_path: relPath, po_code: poCode, box_code: boxCode, arrival_date: arrivalDate, reason: 'photo_path 已存在，跳过' });
           continue;
         }
         let arrivalAction = null;
@@ -441,11 +512,177 @@ function scanFsSyncPoFiles() {
             warnings.push({ box_code: boxCode, photo_path: relPath, existing_arrival_date: existingArrivalDate, folder_arrival_date: arrivalDate, message: '箱码已有不同到货日期，保留原 arrivals 日期；PO 显示优先使用文件夹日期' });
           }
         }
-        items.push({ status: 'new', photo_path: relPath, po_code: poCode, box_code: boxCode, arrival_date: arrivalDate, arrival_action: arrivalAction, notes: 'fs-sync' });
+        items.push({ type: 'po', status: 'new', photo_path: relPath, po_code: poCode, box_code: boxCode, arrival_date: arrivalDate, arrival_action: arrivalAction, notes: 'fs-sync', created_at: dbTimestampFromPhotoName(ent.name) });
       }
     }
   }
   return makeFsSyncSummary(items, warnings);
+}
+
+function scanErrorPoPaperFiles() {
+  const items = [];
+  const warnings = [];
+  const rootRel = 'Error PO Paper';
+  const rootAbs = path.join(path.resolve(UPLOADS_DIR), rootRel);
+  if (!fs.existsSync(rootAbs)) return { items, warnings };
+
+  function addFile(relPath) {
+    const filename = path.basename(relPath);
+    const ext = path.extname(filename).toLowerCase();
+    if (!FS_SYNC_IMAGE_EXTS.has(ext)) return;
+    const poCode = parseErrorPoFilename(filename);
+    if (!poCode) {
+      warnings.push({ photo_path: relPath, reason: '无法从错误订单文件名解析采购单号' });
+      return;
+    }
+    items.push({
+      po_code: poCode,
+      photo_path: relPath,
+      created_at: dbTimestampFromPhotoName(filename),
+      review_status: isSolvedErrorPhotoPath(relPath) ? 'resolved' : 'pending',
+      error_description: 'fs-sync',
+      worker_name: '文件夹同步'
+    });
+  }
+
+  for (const ent of fs.readdirSync(rootAbs, { withFileTypes: true })) {
+    if (ent.name.startsWith('.')) continue;
+    if (ent.isFile()) addFile(`${rootRel}/${ent.name}`);
+    else if (ent.isDirectory() && /^Solved$/i.test(ent.name)) {
+      const solvedAbs = path.join(rootAbs, ent.name);
+      for (const solvedEnt of fs.readdirSync(solvedAbs, { withFileTypes: true })) {
+        if (solvedEnt.name.startsWith('.') || !solvedEnt.isFile()) continue;
+        addFile(`${rootRel}/Solved/${solvedEnt.name}`);
+      }
+    }
+  }
+  return { items: items.sort((a,b)=>a.photo_path.localeCompare(b.photo_path)), warnings };
+}
+
+function previewErrorIndexAlignment() {
+  const scan = scanErrorPoPaperFiles();
+  const dbRows = db.prepare(`SELECT id, po_code, photo_path, review_status, created_at
+    FROM error_records WHERE photo_path IS NOT NULL AND photo_path LIKE 'Error PO Paper/%'`).all();
+  const unmatched = new Map(dbRows.map(r => [r.id, r]));
+  let toAdd = 0, toUpdate = 0, toRemove = 0;
+
+  function findMatch(item) {
+    for (const row of unmatched.values()) {
+      if (row.photo_path === item.photo_path) return row;
+    }
+    for (const row of unmatched.values()) {
+      if (normalizePoCode(row.po_code) === item.po_code && dbTimestampFromPhotoName(row.photo_path, row.created_at) === item.created_at) return row;
+    }
+    const samePo = [...unmatched.values()].filter(row => normalizePoCode(row.po_code) === item.po_code);
+    return samePo.length === 1 ? samePo[0] : null;
+  }
+
+  for (const item of scan.items) {
+    const row = findMatch(item);
+    if (!row) { toAdd++; continue; }
+    unmatched.delete(row.id);
+    const targetStatus = item.review_status === 'resolved'
+      ? 'resolved'
+      : (row.review_status === 'resolved' ? 'pending' : row.review_status);
+    if (row.po_code !== item.po_code || row.photo_path !== item.photo_path || row.created_at !== item.created_at || row.review_status !== targetStatus) toUpdate++;
+  }
+  toRemove = unmatched.size;
+  return {
+    success: true,
+    folder_files: scan.items.length,
+    db_indexed: dbRows.length,
+    to_add: toAdd,
+    to_update: toUpdate,
+    to_remove: toRemove,
+    warnings: scan.warnings
+  };
+}
+
+function alignErrorIndexFromFolder() {
+  const scan = scanErrorPoPaperFiles();
+  const dbRows = db.prepare(`SELECT * FROM error_records
+    WHERE photo_path IS NOT NULL AND photo_path LIKE 'Error PO Paper/%'
+    ORDER BY id`).all();
+  const unmatched = new Map(dbRows.map(r => [r.id, r]));
+  const matchedIds = new Set();
+  let inserted = 0, updated = 0, removed = 0;
+
+  function findMatch(item) {
+    for (const row of unmatched.values()) {
+      if (row.photo_path === item.photo_path) return row;
+    }
+    for (const row of unmatched.values()) {
+      if (normalizePoCode(row.po_code) === item.po_code && dbTimestampFromPhotoName(row.photo_path, row.created_at) === item.created_at) return row;
+    }
+    const samePo = [...unmatched.values()].filter(row => normalizePoCode(row.po_code) === item.po_code);
+    return samePo.length === 1 ? samePo[0] : null;
+  }
+
+  const tx = db.transaction(() => {
+    const insert = db.prepare(`INSERT INTO error_records
+      (po_code, photo_path, error_description, worker_name, review_status, created_at)
+      VALUES (?,?,?,?,?,?)`);
+    const update = db.prepare(`UPDATE error_records SET
+      po_code=?, photo_path=?, review_status=?, created_at=?,
+      error_description=COALESCE(error_description, ?),
+      worker_name=COALESCE(worker_name, ?)
+      WHERE id=?`);
+    const del = db.prepare('DELETE FROM error_records WHERE id=?');
+
+    for (const item of scan.items) {
+      const row = findMatch(item);
+      if (!row) {
+        insert.run(item.po_code, item.photo_path, item.error_description, item.worker_name, item.review_status, item.created_at);
+        inserted++;
+        continue;
+      }
+      unmatched.delete(row.id);
+      matchedIds.add(row.id);
+      const nextStatus = item.review_status === 'resolved'
+        ? 'resolved'
+        : (row.review_status === 'resolved' ? 'pending' : row.review_status);
+      if (row.po_code !== item.po_code || row.photo_path !== item.photo_path || row.review_status !== nextStatus || row.created_at !== item.created_at) {
+        update.run(item.po_code, item.photo_path, nextStatus, item.created_at, item.error_description, item.worker_name, row.id);
+        updated++;
+      }
+    }
+
+    for (const row of unmatched.values()) {
+      del.run(row.id);
+      removed++;
+    }
+  });
+  tx();
+
+  return {
+    success: true,
+    folder_files: scan.items.length,
+    inserted,
+    updated,
+    removed,
+    warnings: scan.warnings,
+    matched: matchedIds.size
+  };
+}
+
+function syncRecordTimestampsFromPhotoNames() {
+  let poUpdated = 0, errorUpdated = 0;
+  const tx = db.transaction(() => {
+    const poRows = db.prepare('SELECT id, photo_path, created_at FROM po_records WHERE photo_path IS NOT NULL').all();
+    const updatePo = db.prepare('UPDATE po_records SET created_at=? WHERE id=?');
+    for (const row of poRows) {
+      const ts = dbTimestampFromPhotoName(row.photo_path, row.created_at);
+      if (ts && ts !== row.created_at) { updatePo.run(ts, row.id); poUpdated++; }
+    }
+    const errRows = db.prepare('SELECT id, photo_path, created_at FROM error_records WHERE photo_path IS NOT NULL').all();
+    const updateErr = db.prepare('UPDATE error_records SET created_at=? WHERE id=?');
+    for (const row of errRows) {
+      const ts = dbTimestampFromPhotoName(row.photo_path, row.created_at);
+      if (ts && ts !== row.created_at) { updateErr.run(ts, row.id); errorUpdated++; }
+    }
+  });
+  tx();
+  return { po_updated: poUpdated, error_updated: errorUpdated };
 }
 
 function resolveErrorPhotoMeta(req) {
@@ -458,6 +695,48 @@ function resolveErrorPhotoMeta(req) {
     absDir: ensureDir(path.join(UPLOADS_DIR, 'Error PO Paper')),
     filename: `${sanitizeCodeSegment(po, 'NOPO')}_error_${buildPhotoStamp()}${ext}`
   };
+}
+function uniqueUploadRelPath(relDir, filename) {
+  const parsed = path.parse(filename);
+  let candidate = `${relDir}/${filename}`;
+  let n = 1;
+  while (fs.existsSync(resolveUploadPath(candidate))) {
+    candidate = `${relDir}/${parsed.name}_${n}${parsed.ext}`;
+    n++;
+  }
+  return candidate;
+}
+function archiveResolvedErrorPhoto(errorRecord) {
+  if (!errorRecord?.photo_path) return { archived:false, photo_path:errorRecord?.photo_path || null, created_at:errorRecord?.created_at || null };
+  if (/^Error PO Paper\/Solved\//i.test(String(errorRecord.photo_path))) {
+    return { archived:false, photo_path:errorRecord.photo_path, created_at:dbTimestampFromPhotoName(errorRecord.photo_path, errorRecord.created_at) };
+  }
+
+  let sourceRel = errorRecord.photo_path;
+  let sourcePath = resolveUploadPath(sourceRel);
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+    const candidate = scanErrorPoPaperFiles().items.find(item =>
+      item.review_status !== 'resolved' && item.po_code === normalizePoCode(errorRecord.po_code)
+    );
+    if (candidate) {
+      sourceRel = candidate.photo_path;
+      sourcePath = resolveUploadPath(sourceRel);
+    }
+  }
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+    return { archived:false, photo_path:errorRecord.photo_path, created_at:errorRecord.created_at, warning:'source_missing' };
+  }
+
+  const solvedDir = 'Error PO Paper/Solved';
+  ensureDir(path.join(UPLOADS_DIR, 'Error PO Paper', 'Solved'));
+  const linked = errorRecord.linked_photo_path ? path.basename(errorRecord.linked_photo_path) : path.basename(sourceRel);
+  const bracketName = linked.replace(/[\\/]/g, '_');
+  const ext = path.extname(sourceRel) || '.jpg';
+  const stamp = photoStampFromDbTimestamp(dbTimestampFromPhotoName(sourceRel, errorRecord.created_at || localTimestamp()));
+  const targetRel = uniqueUploadRelPath(solvedDir, `solved_${stamp}《${bracketName}》${ext}`);
+  const targetPath = resolveUploadPath(targetRel);
+  fs.renameSync(sourcePath, targetPath);
+  return { archived:true, photo_path:targetRel, created_at:dbTimestampFromPhotoName(targetRel, errorRecord.created_at) };
 }
 
 const poUploadStorage = multer.diskStorage({
@@ -502,6 +781,8 @@ const errorUpload = multer({ storage: errorUploadStorage, limits: { fileSize: 30
 });
 const xlsUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10*1024*1024 } });
 
+try { syncRecordTimestampsFromPhotoNames(); } catch (e) { console.warn(`[startup] timestamp sync skipped: ${e.message}`); }
+
 function getPhotoPath(req) {
   if (!req.file) return null;
   const rel = req._photoRelDir || '';
@@ -510,8 +791,25 @@ function getPhotoPath(req) {
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
-app.use('/uploads', express.static(UPLOADS_DIR));
-app.use(express.static(PUBLIC_DIR));
+app.use('/thumbnails', express.static(THUMBNAILS_DIR, {
+  maxAge: '30d',
+  immutable: true,
+  fallthrough: true
+}));
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  maxAge: '7d',
+  fallthrough: true
+}));
+app.use(express.static(PUBLIC_DIR, {
+  etag: true,
+  lastModified: true,
+  maxAge: '1h',
+  setHeaders(res, filePath) {
+    if (path.extname(filePath).toLowerCase() === '.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 app.get('/api/health', (req,res) => res.json({ status:'ok' }));
 
 // ════════════════════════════════════════
@@ -529,7 +827,7 @@ app.post('/api/fs-sync/po-apply', (req, res) => {
       let inserted_po_records = 0;
       let supplemented_arrivals = 0;
       const touchedBoxes = new Set();
-      const insertPo = db.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes) VALUES (?,?,?,?,?)`);
+      const insertPo = db.prepare(`INSERT INTO po_records (box_code, arrival_date, po_code, photo_path, notes, created_at) VALUES (?,?,?,?,?,?)`);
       const insertArrival = db.prepare(`INSERT INTO arrivals (box_code, arrival_date, worker_name, notes) VALUES (?,?,?,?)`);
       const updateArrivalDate = db.prepare(`UPDATE arrivals SET arrival_date=?, worker_name=COALESCE(worker_name, ?), notes=COALESCE(notes, ?) WHERE box_code=? AND (arrival_date IS NULL OR arrival_date='')`);
       for (const r of preview.records) {
@@ -546,13 +844,40 @@ app.post('/api/fs-sync/po-apply', (req, res) => {
           }
           touchedBoxes.add(r.box_code);
         }
-        insertPo.run(r.box_code || '', r.arrival_date, r.po_code, r.photo_path, r.notes || 'fs-sync');
+        insertPo.run(r.box_code || '', r.arrival_date, r.po_code, r.photo_path, r.notes || 'fs-sync', r.created_at || dbTimestampFromPhotoName(r.photo_path));
         inserted_po_records++;
         if (process.env.NODE_ENV === 'test' && req.body?.simulate_error) throw new Error('Simulated fs-sync failure');
       }
-      return { ...preview, applied:true, inserted_po_records, supplemented_arrivals };
+      return {
+        ...preview,
+        applied:true,
+        inserted_po_records,
+        supplemented_arrivals
+      };
     });
-    res.json(tx());
+    const result = tx();
+    const error_alignment = alignErrorIndexFromFolder();
+    res.json({
+      ...result,
+      inserted_error_records: error_alignment.inserted,
+      updated_error_records: error_alignment.updated,
+      removed_error_records: error_alignment.removed,
+      error_alignment
+    });
+  } catch (e) {
+    res.status(500).json({ success:false, error:e.message });
+  }
+});
+
+app.get('/api/fs-sync/errors-preview', (req, res) => {
+  try { res.json(previewErrorIndexAlignment()); }
+  catch (e) { res.status(500).json({ success:false, error:e.message }); }
+});
+
+app.post('/api/fs-sync/errors-apply', (req, res) => {
+  try {
+    const result = alignErrorIndexFromFolder();
+    res.json(result);
   } catch (e) {
     res.status(500).json({ success:false, error:e.message });
   }
@@ -906,8 +1231,8 @@ app.post('/api/unboxing/po', (req, res) => {
       if (!po_code && !(no_po_reason || notes)) return res.status(400).json({ error: 'Missing PO code. If there is no PO paper, select a reason.' });
       const photo_path = getPhotoPath(req);
       const arrivalDate = req._photoMeta?.rawDate || null;
-      const r = db.prepare('INSERT INTO po_records (session_id,box_code,arrival_date,po_code,photo_path,notes) VALUES(?,?,?,?,?,?)')
-        .run(session_id||null, code, arrivalDate, finalPo, photo_path, notes||no_po_reason||null);
+      const r = db.prepare('INSERT INTO po_records (session_id,box_code,arrival_date,po_code,photo_path,notes,created_at) VALUES(?,?,?,?,?,?,?)')
+        .run(session_id||null, code, arrivalDate, finalPo, photo_path, notes||no_po_reason||null, dbTimestampFromPhotoName(photo_path));
       res.json({ success:true, id:r.lastInsertRowid });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
@@ -922,8 +1247,8 @@ app.post('/api/po-record/manual', (req, res) => {
       const finalBox = String(box_code || '').trim().toUpperCase();
       const arrivalDate = req._photoMeta?.rawDate || null;
       const photo_path = getPhotoPath(req);
-      const r = db.prepare('INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES(?,?,?,?,?)')
-        .run(finalBox, arrivalDate, finalPo, photo_path, notes||null);
+      const r = db.prepare('INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes,created_at) VALUES(?,?,?,?,?,?)')
+        .run(finalBox, arrivalDate, finalPo, photo_path, notes||null, dbTimestampFromPhotoName(photo_path));
       res.json({ success:true, id:r.lastInsertRowid, arrival_date:arrivalDate, photo_path });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
@@ -961,8 +1286,8 @@ app.post('/api/po-record/pc', (req, res) => {
       if (!po_code && !(no_po_reason || notes)) return res.status(400).json({ error: 'Missing PO code. If there is no PO paper, select a reason.' });
       const photo_path = req.file ? `${req._photoRelDir}/${req.file.filename}` : null;
       const arrivalDate = req._photoMeta?.rawDate || null;
-      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES('',?,?,?,?)")
-        .run(arrivalDate, finalPo, photo_path, notes||no_po_reason||null);
+      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes,created_at) VALUES('',?,?,?,?,?)")
+        .run(arrivalDate, finalPo, photo_path, notes||no_po_reason||null, dbTimestampFromPhotoName(photo_path));
       res.json({ success:true, id:r.lastInsertRowid });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
@@ -996,15 +1321,25 @@ app.get('/api/po/all', (req, res) => {
 });
 app.get('/api/po/overview', (req, res) => {
   const search = String(req.query.search || '').trim();
+  const paginated = Object.prototype.hasOwnProperty.call(req.query, 'page') || Object.prototype.hasOwnProperty.call(req.query, 'pageSize');
+  const { page, pageSize, offset } = getPagination(req.query, 50, 100);
+  const sortParam = String(req.query.sort || 'created_at');
+  const dir = String(req.query.dir || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  const validSort = { po_code:'pr.po_code', created_at:'pr.created_at' };
+  const orderCol = validSort[sortParam] || 'pr.created_at';
   let sql = `SELECT pr.id, pr.po_code, pr.box_code, pr.arrival_date, pr.photo_path, pr.notes, pr.created_at,
     a.arrival_date as box_arrival_date,
     (SELECT COUNT(*) FROM error_records e WHERE e.linked_po_record_id=pr.id) as error_count
     FROM po_records pr
     LEFT JOIN arrivals a ON a.box_code=pr.box_code`;
+  let countSql = 'SELECT COUNT(*) as total FROM po_records pr';
   const params = [];
-  if (search) { sql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
-  sql += ' ORDER BY pr.po_code ASC, pr.created_at ASC';
-  const rows = db.prepare(sql).all(...params);
+  if (search) { sql += ' WHERE pr.po_code LIKE ?'; countSql += ' WHERE pr.po_code LIKE ?'; params.push(`%${search}%`); }
+  const total = db.prepare(countSql).get(...params).total;
+  sql += paginated
+    ? ` ORDER BY ${orderCol} ${dir}, pr.id ${dir} LIMIT ? OFFSET ?`
+    : ' ORDER BY pr.po_code ASC, pr.created_at ASC';
+  const rows = paginated ? db.prepare(sql).all(...params, pageSize, offset) : db.prepare(sql).all(...params);
   const byDate = {};
   for (const row of rows) {
     const resolvedArrivalDate = resolvePoArrivalDate(row);
@@ -1021,7 +1356,8 @@ app.get('/api/po/overview', (req, res) => {
     arrival_date: g.arrival_date,
     pos: Object.values(g.po_map).sort((a,b)=>a.po_code.localeCompare(b.po_code))
   })).sort((a,b)=>String(b.arrival_date).localeCompare(String(a.arrival_date)));
-  res.json(result);
+  if (!paginated) return res.json(result);
+  res.json({ items: result, total, page, pageSize, hasMore: offset + rows.length < total });
 });
 
 // ════════════════════════════════════════
@@ -1035,22 +1371,33 @@ app.post('/api/error', (req, res) => {
       const finalPo = normalizePoCode(po_code);
       assertValidPoCode(finalPo);
       const photo_path = getPhotoPath(req);
-      const r = db.prepare('INSERT INTO error_records (po_code,photo_path,error_description,worker_name) VALUES(?,?,?,?)')
-        .run(finalPo, photo_path, error_description||null, worker_name||'未知');
+      const r = db.prepare('INSERT INTO error_records (po_code,photo_path,error_description,worker_name,created_at) VALUES(?,?,?,?,?)')
+        .run(finalPo, photo_path, error_description||null, worker_name||'未知', dbTimestampFromPhotoName(photo_path));
       res.json({ success:true, id:r.lastInsertRowid });
     } catch(e) { res.status(400).json({ error:e.message }); }
   });
 });
 app.get('/api/errors', (req, res) => {
   const { status, date_from, date_to, po_code } = req.query;
+  const paginated = Object.prototype.hasOwnProperty.call(req.query, 'page') || Object.prototype.hasOwnProperty.call(req.query, 'pageSize');
+  const { page, pageSize, offset } = getPagination(req.query, 50, 100);
   let sql = `SELECT er.*, pr.box_code as linked_box FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
+  let countSql = `SELECT COUNT(*) as total FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
   const p = [];
-  if (status)    { sql += ' AND er.review_status=?';     p.push(status); }
-  if (date_from) { sql += ' AND date(er.created_at)>=?'; p.push(date_from); }
-  if (date_to)   { sql += ' AND date(er.created_at)<=?'; p.push(date_to); }
-  if (po_code)   { sql += ' AND er.po_code LIKE ?';      p.push(`%${po_code}%`); }
-  sql += ' ORDER BY er.created_at DESC';
-  res.json(db.prepare(sql).all(...p));
+  function addWhere(clause, value) {
+    sql += clause;
+    countSql += clause;
+    p.push(value);
+  }
+  if (status)    addWhere(' AND er.review_status=?', status);
+  if (date_from) addWhere(' AND date(er.created_at)>=?', date_from);
+  if (date_to)   addWhere(' AND date(er.created_at)<=?', date_to);
+  if (po_code)   addWhere(' AND er.po_code LIKE ?', `%${po_code}%`);
+  const total = db.prepare(countSql).get(...p).total;
+  sql += paginated ? ' ORDER BY er.created_at DESC LIMIT ? OFFSET ?' : ' ORDER BY er.created_at DESC';
+  const items = paginated ? db.prepare(sql).all(...p, pageSize, offset) : db.prepare(sql).all(...p);
+  if (!paginated) return res.json(items);
+  res.json({ items, total, page, pageSize, hasMore: offset + items.length < total });
 });
 app.post('/api/errors/:id/create-po-record', (req, res) => {
   let copiedPath = null;
@@ -1075,8 +1422,8 @@ app.post('/api/errors/:id/create-po-record', (req, res) => {
 
     let poRecordId;
     db.transaction(() => {
-      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes) VALUES('',?,?,?,?)")
-        .run(arrivalDate, finalPo, target.relPath, notes || null);
+      const r = db.prepare("INSERT INTO po_records (box_code,arrival_date,po_code,photo_path,notes,created_at) VALUES('',?,?,?,?,?)")
+        .run(arrivalDate, finalPo, target.relPath, notes || null, dbTimestampFromPhotoName(target.relPath));
       poRecordId = r.lastInsertRowid;
       const u = db.prepare('UPDATE error_records SET linked_po_record_id=? WHERE id=?').run(poRecordId, errorRecord.id);
       if (u.changes !== 1) throw new Error('关联错误订单失败');
@@ -1104,10 +1451,21 @@ app.get('/api/errors/:id', (req, res) => {
   res.json({ record, po_records, related_errors, arrival });
 });
 app.put('/api/errors/:id/review', (req, res) => {
-  const { review_status, review_notes, reviewed_by } = req.body;
-  db.prepare(`UPDATE error_records SET review_status=?,review_notes=?,reviewed_by=?,
-    reviewed_at=strftime('%Y-%m-%d %H:%M:%S','now','localtime') WHERE id=?`).run(review_status, review_notes||null, reviewed_by||'管理员', req.params.id);
-  res.json({ success:true });
+  try {
+    const { review_status, review_notes, reviewed_by } = req.body;
+    const before = db.prepare(`SELECT er.*, pr.photo_path as linked_photo_path
+      FROM error_records er LEFT JOIN po_records pr ON pr.id=er.linked_po_record_id
+      WHERE er.id=?`).get(req.params.id);
+    if (!before) return res.status(404).json({ error:'未找到错误订单' });
+    let archive = { archived:false, photo_path:before.photo_path };
+    if (review_status === 'resolved') archive = archiveResolvedErrorPhoto(before);
+    db.prepare(`UPDATE error_records SET review_status=?,review_notes=?,reviewed_by=?,
+      reviewed_at=?, photo_path=?, created_at=? WHERE id=?`)
+      .run(review_status, review_notes||null, reviewed_by||'管理员', localTimestamp(), archive.photo_path || before.photo_path || null, archive.created_at || before.created_at, req.params.id);
+    res.json({ success:true, archived:archive.archived, photo_path:archive.photo_path, warning:archive.warning });
+  } catch(e) {
+    res.status(400).json({ error:e.message });
+  }
 });
 app.put('/api/errors/:id/edit', (req, res) => {
   db.prepare('UPDATE error_records SET po_code=COALESCE(?,po_code), error_description=? WHERE id=?')
@@ -1312,4 +1670,9 @@ app.post('/api/db/import', xlsUpload.single('file'), (req, res) => {
   } catch(e) { res.status(400).json({ error:e.message }); }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`[仓库系统] 端口 ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[仓库系统] 端口 ${PORT}`);
+  if (process.env.DISABLE_THUMBNAIL_SCANNER !== '1') {
+    startThumbnailScanner({ uploadsDir: UPLOADS_DIR, thumbnailsDir: THUMBNAILS_DIR });
+  }
+});

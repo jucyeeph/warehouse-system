@@ -5,7 +5,9 @@
 FROM warehouse-nasb-warehouse-admin:latest
 
 WORKDIR /app
-COPY server.js .
+RUN npm install --omit=dev --no-save sharp@^0.34.5
+
+COPY server.js thumbnail-service.js thumbnails-cli.js ./
 
 EXPOSE 3000
 CMD ["node", "server.js"]

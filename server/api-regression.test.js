@@ -80,7 +80,7 @@ function assertNoUnknownUploads() {
 test.before(async () => {
   child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, NODE_ENV: 'test', PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
+    env: { ...process.env, NODE_ENV: 'test', DISABLE_THUMBNAIL_SCANNER: '1', PORT: String(PORT), DB_PATH, UPLOADS_DIR, PUBLIC_DIR: path.join(ROOT, 'public') },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   child.stdout.on('data', d => process.stdout.write(String(d)));
@@ -268,10 +268,72 @@ test('fs-sync preview scans folder PO images without writing DB and reports exce
   assert.ok(preview.body.unrecognized_files.find(r => r.photo_path === '2026-05-20/No box code/BAD_NOBOXCODE_20260520_144644.jpg'));
   assert.equal(preview.body.records.some(r => r.photo_path.includes('not-a-date')), false);
   assert.equal(preview.body.records.some(r => r.photo_path.startsWith('Error PO Paper/')), false);
+  assert.ok(preview.body.error_records.find(r => r.photo_path === 'Error PO Paper/POMCMP028398_error_20260520_144644.jpg'));
+  assert.equal(preview.body.error_records.find(r => r.photo_path === 'Error PO Paper/POMCMP028398_error_20260520_144644.jpg').created_at, '2026-05-20 14:46:44');
 
   const afterDb = new Database(DB_PATH);
   assert.equal(afterDb.prepare('SELECT COUNT(*) as c FROM po_records WHERE photo_path=?').get('2026-05-20/No box code/POMCMP028301_NOBOXCODE_20260520_144644.jpg').c, beforePo, 'preview must not write DB');
   afterDb.close();
+});
+
+test('fs-sync apply indexes Error PO Paper images into error records', async () => {
+  const rel = 'Error PO Paper/POMCMP030461_error_20260513_141440.jpg';
+  writeUpload(rel);
+
+  const preview = await getJson('/api/fs-sync/po-preview');
+  assert.equal(preview.status, 200);
+  assert.ok(preview.body.error_records.find(r => r.photo_path === rel));
+
+  const applied = await postJson('/api/fs-sync/po-apply', {});
+  assert.equal(applied.status, 200);
+  assert.equal(applied.body.success, true);
+  assert.ok(applied.body.inserted_error_records >= 1);
+
+  const checkDb = new Database(DB_PATH);
+  const row = checkDb.prepare('SELECT po_code, photo_path, created_at, review_status FROM error_records WHERE photo_path=?').get(rel);
+  assert.equal(row.po_code, 'POMCMP030461');
+  assert.equal(row.created_at, '2026-05-13 14:14:40');
+  assert.equal(row.review_status, 'pending');
+  checkDb.close();
+});
+
+test('error folder alignment treats Error PO Paper as source of truth including Solved', async () => {
+  const activeRel = 'Error PO Paper/POMCMP030463_error_20260513_141440.jpg';
+  const solvedRel = 'Error PO Paper/Solved/solved_20260513_151500《POMCMP030464_20260501DSH029_20260513_101337.jpg》.jpg';
+  const staleRel = 'Error PO Paper/POMCMP030465_error_20260510_090000.jpg';
+  writeUpload(activeRel);
+  writeUpload(solvedRel);
+
+  const fixtureDb = new Database(DB_PATH);
+  fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030464', staleRel, 'pending', '2026-05-01 00:00:00', 'old-index');
+  fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030466', 'Error PO Paper/POMCMP030466_error_20260510_090000.jpg', 'pending', '2026-05-10 09:00:00', 'old-index');
+  fixtureDb.close();
+
+  const preview = await getJson('/api/fs-sync/errors-preview');
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.success, true);
+  assert.ok(preview.body.to_add >= 1);
+  assert.ok(preview.body.to_update >= 1);
+  assert.ok(preview.body.to_remove >= 1);
+
+  const aligned = await postJson('/api/fs-sync/errors-apply', {});
+  assert.equal(aligned.status, 200);
+  assert.equal(aligned.body.success, true);
+
+  const checkDb = new Database(DB_PATH);
+  const active = checkDb.prepare('SELECT po_code, review_status, created_at FROM error_records WHERE photo_path=?').get(activeRel);
+  assert.equal(active.po_code, 'POMCMP030463');
+  assert.equal(active.review_status, 'pending');
+  assert.equal(active.created_at, '2026-05-13 14:14:40');
+  const solved = checkDb.prepare('SELECT po_code, review_status, created_at FROM error_records WHERE photo_path=?').get(solvedRel);
+  assert.equal(solved.po_code, 'POMCMP030464');
+  assert.equal(solved.review_status, 'resolved');
+  assert.equal(solved.created_at, '2026-05-13 15:15:00');
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM error_records WHERE photo_path=?').get(staleRel).c, 0);
+  assert.equal(checkDb.prepare('SELECT COUNT(*) as c FROM error_records WHERE po_code=?').get('POMCMP030466').c, 0);
+  checkDb.close();
 });
 
 test('fs-sync apply inserts no-box PO records and skips duplicate photo_path', async () => {
@@ -359,6 +421,67 @@ test('error PO photos are isolated under Error PO Paper', async () => {
   assert.equal(r.body.success, true);
   assertNoUnknownUploads();
   assert.match(listUploads().join('\n'), /^Error PO Paper\/POMCMP030459_error_/m);
+  const checkDb = new Database(DB_PATH);
+  const row = checkDb.prepare('SELECT photo_path, created_at FROM error_records WHERE id=?').get(r.body.id);
+  assert.equal(row.created_at, row.photo_path.match(/_(\d{8})_(\d{6})/)[1].replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') + ' ' + row.photo_path.match(/_(\d{8})_(\d{6})/)[2].replace(/(\d{2})(\d{2})(\d{2})/, '$1:$2:$3'));
+  checkDb.close();
+});
+
+test('resolved error records are renamed and archived under Error PO Paper/Solved', async () => {
+  await postJson('/api/arrival', { box_code: '20260525DSH001', worker_name: 'receiver', arrival_date: '2026-05-25' });
+  const err = await postPhoto('/api/error', { po_code: 'POMCMP030462', worker_name: 'qc', error_description: 'archive me' });
+  assert.equal(err.status, 200);
+
+  const created = await postJson(`/api/errors/${err.body.id}/create-po-record`, {
+    po_code: 'POMCMP030462',
+    arrival_date: '2026-05-25',
+    notes: 'created for archive'
+  });
+  assert.equal(created.status, 200);
+
+  const reviewed = await fetch(`http://127.0.0.1:${PORT}/api/errors/${err.body.id}/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_status: 'resolved', review_notes: 'done', reviewed_by: 'tester' })
+  });
+  const reviewedBody = await reviewed.json();
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewedBody.archived, true);
+  assert.match(reviewedBody.photo_path, /^Error PO Paper\/Solved\/solved_\d{8}_\d{6}《POMCMP030462_NOBOXCODE_\d{8}_\d{6}\.jpg》\.jpg$/);
+  assert.equal(fs.existsSync(path.join(UPLOADS_DIR, reviewedBody.photo_path)), true);
+
+  const checkDb = new Database(DB_PATH);
+  const row = checkDb.prepare('SELECT review_status, photo_path FROM error_records WHERE id=?').get(err.body.id);
+  assert.equal(row.review_status, 'resolved');
+  assert.equal(row.photo_path, reviewedBody.photo_path);
+  checkDb.close();
+});
+
+test('resolved review archives from folder source when DB path is stale', async () => {
+  const activeRel = 'Error PO Paper/POMCMP030467_error_20260513_161700.jpg';
+  writeUpload(activeRel);
+  const fixtureDb = new Database(DB_PATH);
+  const id = fixtureDb.prepare(`INSERT INTO error_records (po_code, photo_path, review_status, created_at, worker_name)
+    VALUES (?, ?, ?, ?, ?)`).run('POMCMP030467', 'Error PO Paper/missing_20260513_161700.jpg', 'reviewed', '2026-05-01 00:00:00', 'old-index').lastInsertRowid;
+  fixtureDb.close();
+
+  const reviewed = await fetch(`http://127.0.0.1:${PORT}/api/errors/${id}/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_status: 'resolved', review_notes: 'done', reviewed_by: 'tester' })
+  });
+  const reviewedBody = await reviewed.json();
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewedBody.archived, true);
+  assert.equal(fs.existsSync(path.join(UPLOADS_DIR, activeRel)), false);
+  assert.equal(fs.existsSync(path.join(UPLOADS_DIR, reviewedBody.photo_path)), true);
+
+  const checkDb = new Database(DB_PATH);
+  const row = checkDb.prepare('SELECT review_status, photo_path, created_at FROM error_records WHERE id=?').get(id);
+  assert.equal(row.review_status, 'resolved');
+  assert.equal(row.photo_path, reviewedBody.photo_path);
+  assert.equal(row.created_at, '2026-05-13 16:17:00');
+  checkDb.close();
 });
 
 test('PC no-box and no-PO upload saves NOPO evidence under date/No box code', async () => {

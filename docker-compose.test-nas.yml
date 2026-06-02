@@ -24,6 +24,7 @@ services:
       - PORT=3000
       - DB_PATH=/data/warehouse.db
       - UPLOADS_DIR=/data/uploads
+      - THUMBNAILS_DIR=/data/thumbnails
       - PUBLIC_DIR=/public
       - TZ=Asia/Shanghai
       - NODE_ENV=test

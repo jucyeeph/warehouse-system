@@ -16,6 +16,7 @@ services:
       - PORT=3000
       - DB_PATH=/data/warehouse.db
       - UPLOADS_DIR=/data/uploads
+      - THUMBNAILS_DIR=/data/thumbnails
       - TZ=Asia/Shanghai
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]

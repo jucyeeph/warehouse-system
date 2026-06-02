@@ -5,13 +5,18 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test api-regression.test.js frontend-regression.test.js"
+    "thumbnails:dry-run": "node thumbnails-cli.js dry-run",
+    "thumbnails:scan": "node thumbnails-cli.js scan",
+    "thumbnails:force": "node thumbnails-cli.js force",
+    "thumbnails:clean": "node thumbnails-cli.js clean",
+    "test": "node --test api-regression.test.js frontend-regression.test.js thumbnail-service.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
+    "sharp": "^0.34.5",
     "xlsx": "^0.18.5"
   }
 }
