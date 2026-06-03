@@ -204,6 +204,11 @@ rollback_to() {
     log "ERROR rollback target is not deployable: $target"
     return 1
   fi
+  if [ -n "${RELEASE_DIR:-}" ] && [ -d "$RELEASE_DIR" ] && [ "$RELEASE_DIR" != "$target" ]; then
+    log "stopping failed release before rollback"
+    cd "$RELEASE_DIR"
+    run_compose -f docker-compose.yml down || true
+  fi
   log "rolling back to $target"
   cd "$target"
   run_compose -f docker-compose.yml up -d --build
@@ -302,6 +307,13 @@ if ! run_compose -f docker-compose.yml build; then
 fi
 
 log "starting release"
+if [ -n "$PREVIOUS_RELEASE" ] && [ -f "$PREVIOUS_RELEASE/docker-compose.yml" ]; then
+  log "stopping previous release before container switch"
+  cd "$PREVIOUS_RELEASE"
+  run_compose -f docker-compose.yml down
+  cd "$RELEASE_DIR"
+fi
+
 if ! run_compose -f docker-compose.yml up -d; then
   log "start failed; attempting rollback"
   rollback_to "$PREVIOUS_RELEASE"

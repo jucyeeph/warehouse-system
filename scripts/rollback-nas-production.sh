@@ -178,6 +178,12 @@ if [ -f "$DATA_DIR/warehouse.db" ] && command -v sqlite3 >/dev/null 2>&1; then
 fi
 
 log "rolling back from $CURRENT_RELEASE to $TARGET_RELEASE"
+if [ -n "$CURRENT_RELEASE" ] && [ -d "$CURRENT_RELEASE" ] && [ "$CURRENT_RELEASE" != "$TARGET_RELEASE" ]; then
+  log "stopping current release before rollback"
+  cd "$CURRENT_RELEASE"
+  run_compose -f docker-compose.yml down || true
+fi
+
 cd "$TARGET_RELEASE"
 run_compose -f docker-compose.yml up -d --build
 health_check
