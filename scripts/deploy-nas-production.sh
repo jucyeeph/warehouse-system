@@ -180,11 +180,9 @@ compose_cmd() {
 run_compose() {
   cmd="$(compose_cmd)"
   if [ "$(id -u)" -eq 0 ]; then
-    sh -c "$cmd $*"
-  elif sh -c "$cmd version" >/dev/null 2>&1; then
-    sh -c "$cmd $*"
+    HOME=/tmp sh -c "$cmd $*"
   else
-    sudo -S sh -c "$cmd $*"
+    HOME=/tmp sudo -S sh -c "$cmd $*"
   fi
 }
 
@@ -212,6 +210,43 @@ rollback_to() {
   health_check
 }
 
+backup_production_data() {
+  data_backup_dir="$1/data"
+  mkdir -p "$data_backup_dir"
+
+  if [ ! -d "$DATA_DIR" ]; then
+    log "ERROR production data dir missing: $DATA_DIR"
+    exit 1
+  fi
+
+  if [ -f "$DATA_DIR/warehouse.db" ]; then
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+      log "ERROR sqlite3 is required to create a safe production database backup"
+      exit 1
+    fi
+    sqlite3 "$DATA_DIR/warehouse.db" 'PRAGMA integrity_check;' | grep -qx 'ok'
+    sqlite3 "$DATA_DIR/warehouse.db" ".backup '$data_backup_dir/warehouse.db'"
+    sqlite3 "$data_backup_dir/warehouse.db" 'PRAGMA integrity_check;' | grep -qx 'ok'
+    log "production database backed up and verified"
+  else
+    log "WARN production database not found before deploy"
+  fi
+
+  for item in uploads thumbnails; do
+    if [ -e "$DATA_DIR/$item" ]; then
+      cp -a "$DATA_DIR/$item" "$data_backup_dir/"
+    fi
+  done
+
+  {
+    printf 'release=%s\n' "$RELEASE_ID"
+    printf 'source_data=%s\n' "$DATA_DIR"
+    printf 'backup_data=%s\n' "$data_backup_dir"
+    printf 'created_at=%s\n' "$(date '+%F %T')"
+    find "$data_backup_dir" -maxdepth 2 -type f 2>/dev/null | wc -l | awk '{print "file_count="$1}'
+  } > "$data_backup_dir/backup-manifest.txt"
+}
+
 : "${PROD_ROOT:?missing PROD_ROOT}"
 : "${RELEASE_ID:?missing RELEASE_ID}"
 : "${REMOTE_ARCHIVE:?missing REMOTE_ARCHIVE}"
@@ -226,10 +261,7 @@ PREVIOUS_FILE="$PROD_ROOT/previous-release"
 log "production deploy start release=$RELEASE_ID"
 mkdir -p "$PROD_ROOT" "$DATA_DIR" "$RELEASES_DIR" "$BACKUP_DIR"
 
-if [ -f "$DATA_DIR/warehouse.db" ] && command -v sqlite3 >/dev/null 2>&1; then
-  sqlite3 "$DATA_DIR/warehouse.db" 'PRAGMA integrity_check;' | grep -qx 'ok'
-  log "production database integrity ok before deploy"
-fi
+backup_production_data "$BACKUP_DIR"
 
 if [ -f "$CURRENT_FILE" ]; then
   PREVIOUS_RELEASE="$(cat "$CURRENT_FILE")"

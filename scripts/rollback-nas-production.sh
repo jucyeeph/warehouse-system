@@ -128,11 +128,9 @@ compose_cmd() {
 run_compose() {
   cmd="$(compose_cmd)"
   if [ "$(id -u)" -eq 0 ]; then
-    sh -c "$cmd $*"
-  elif sh -c "$cmd version" >/dev/null 2>&1; then
-    sh -c "$cmd $*"
+    HOME=/tmp sh -c "$cmd $*"
   else
-    sudo -S sh -c "$cmd $*"
+    HOME=/tmp sudo -S sh -c "$cmd $*"
   fi
 }
 
