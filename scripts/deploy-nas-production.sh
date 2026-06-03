@@ -154,6 +154,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 require_cmd expect
+export NAS_HOST NAS_PORT NAS_USER NAS_PASSWORD NAS_DIR
 
 cat > "$LOCAL_REMOTE_SCRIPT" <<'REMOTE_SCRIPT'
 #!/bin/sh
@@ -297,7 +298,6 @@ expect_scp "$LOCAL_ARCHIVE" "$REMOTE_ARCHIVE" 2>&1 | redact_output
 expect_scp "$LOCAL_REMOTE_SCRIPT" "$REMOTE_SCRIPT" 2>&1 | redact_output
 
 echo "[生产部署] 执行生产部署；失败会自动回滚到上一版本..."
-export NAS_HOST NAS_PORT NAS_USER NAS_PASSWORD NAS_DIR
 expect_ssh "PROD_ROOT='${NAS_DIR}' RELEASE_ID='${RELEASE_ID}' REMOTE_ARCHIVE='${REMOTE_ARCHIVE}' sh '${REMOTE_SCRIPT}'; rc=\$?; rm -f '${REMOTE_SCRIPT}'; exit \$rc" 2>&1 | redact_output
 
 echo "[生产部署] 完成。"
