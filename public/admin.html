@@ -174,6 +174,10 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 .legend-mark{width:18px;height:14px;border-radius:4px;display:inline-block}
 .legend-mark.arrived{background:#e0f2fe;border:2px solid #0284c7}
 .legend-mark.missing{background:repeating-linear-gradient(135deg,#fff7ed 0,#fff7ed 5px,#ffedd5 5px,#ffedd5 10px);border:1.5px dashed #f59e0b}
+.view-switch{display:inline-flex;border:1px solid var(--border);background:#fff;border-radius:8px;overflow:hidden}
+.view-switch button{height:30px;border:none;background:#fff;color:var(--muted);font-size:12px;font-weight:800;padding:0 12px;cursor:pointer}
+.view-switch button+button{border-left:1px solid var(--border)}
+.view-switch button.on{background:var(--primary);color:#fff}
 #box-table-wrap{overflow:auto;height:calc(100vh - var(--hdr) - 122px);background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)}
 #box-table{border-collapse:separate;border-spacing:0;min-width:max-content;table-layout:fixed}
 #box-table thead th{
@@ -220,6 +224,33 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 .cell-in{line-height:1.2;pointer-events:none}
 .cell-in .ct{font-size:10px;font-weight:600;opacity:.7}
 .cell-in .cs{font-size:12px;font-weight:800}
+#box-summary-wrap{display:none;height:calc(100vh - var(--hdr) - 122px);overflow:auto}
+.summary-stack{display:flex;flex-direction:column;gap:12px;padding-bottom:12px}
+.summary-card{background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
+.summary-card-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;background:#f8fafc;border-bottom:1px solid var(--border)}
+.summary-date{font-size:15px;font-weight:850}
+.summary-meta{font-size:12px;color:var(--muted);font-weight:700}
+.summary-table{width:100%;border-collapse:collapse}
+.summary-table th{background:#fbfdff;color:var(--muted);font-size:11px;font-weight:850;text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.summary-table td{padding:10px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12px}
+.summary-table tr:last-child td{border-bottom:none}
+.summary-row-date-on td{background:#fefce8}
+.summary-row-incomplete td{background:#fff7ed}
+.summary-row-incomplete td:first-child{box-shadow:inset 4px 0 0 #f97316}
+.summary-row-incomplete.summary-row-date-on td{background:#ffedd5}
+.summary-code{font-family:monospace;font-size:13px;font-weight:850}
+.summary-batches{display:flex;gap:7px;flex-wrap:wrap}
+.summary-chip{border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.summary-chip:hover{filter:brightness(.97)}
+.summary-chip.arrived{border-color:#86efac;background:#f0fdf4;color:#15803d}
+.summary-chip.missing{border-style:dashed;border-color:#fdba74;background:#fff7ed;color:#b45309}
+.summary-chip.on{box-shadow:0 0 0 2px rgba(37,99,235,.2)}
+.summary-expand{background:#f8fafc;border-top:1px solid var(--border);padding:12px 14px}
+.summary-expand-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.summary-box-list{display:flex;gap:6px;flex-wrap:wrap;max-height:190px;overflow:auto;padding:8px;background:#fff;border:1px solid var(--border);border-radius:8px}
+.summary-box-tag{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);background:#fff;border-radius:6px;padding:4px 7px;font-family:monospace;font-size:11px;font-weight:800}
+.summary-box-tag input{accent-color:var(--primary)}
+.summary-empty{padding:36px;text-align:center;color:var(--muted);background:#fff;border:1px solid var(--border);border-radius:8px}
 
 /* Stats bar (bottom fixed) */
 #stats-bar{display:none;position:fixed;bottom:0;left:240px;right:0;
@@ -399,6 +430,10 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
         <div class="module-sub">按发货日期展开大表格，点击日期查看批次进度，点击箱格设置到货日期或打开右侧详情侧栏。</div>
       </div>
       <div id="box-legend">
+        <span class="view-switch">
+          <button id="box-view-overview" class="on" onclick="setBoxView('overview')">总览视图</button>
+          <button id="box-view-summary" onclick="setBoxView('summary')">总结视图</button>
+        </span>
         <span class="legend-chip"><i class="legend-mark arrived"></i>蓝框 / 已到</span>
         <span class="legend-chip"><i class="legend-mark missing"></i>斜纹 / 在途</span>
         <span class="toolbar-note">批量模式下可多选箱格统一修改日期。</span>
@@ -406,6 +441,9 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
     </div>
     <div id="box-table-wrap">
       <table id="box-table"><tbody><tr><td class="loading" style="border:none">加载中…</td></tr></tbody></table>
+    </div>
+    <div id="box-summary-wrap">
+      <div class="loading">加载中…</div>
     </div>
     <!-- Stats bottom (hidden by default, shown when date selected) -->
     <div style="height:44px"></div><!-- spacer for stats bar -->
@@ -624,6 +662,7 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   <span style="font-size:13px;white-space:nowrap">已选 <b id="batch-cnt">0</b> 个</span>
   <input type="date" class="inp" id="batch-date" style="height:30px;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff">
   <button class="btn btn-success" onclick="applyBatch()" style="height:30px">✅ 应用日期</button>
+  <button class="btn btn-danger" onclick="clearBatchArrivalDate()" style="height:30px">改回在途</button>
   <button class="btn btn-ghost" onclick="clearBatchSel()" style="height:30px">清除选择</button>
 </div>
 
@@ -699,6 +738,7 @@ let selErrId=null, batchMode=false, batchSel=new Set();
 let currentMidId=null, midItems=[];
 let importRows=[], mpoPhotoFile=null, mpoArrivalDates=[];
 let tableData=null, arrivalDates=[], selArrDate=null, selShipmentDate=null;
+let boxView='overview', summaryExpandedKey=null;
 let shipmentOverview=[], poOverview=[];
 let errPage=1, errPageSize=50, errTotal=0, poPage=1, poPageSize=50, poTotal=0;
 let currentPoGroup=null, currentPoRecord=null;
@@ -799,14 +839,32 @@ async function loadStats(){
 // ════════════════════════════
 async function loadBoxData(){
   document.getElementById('box-table').innerHTML='<tbody><tr><td class="loading" style="border:none;text-align:center;padding:30px">加载中…</td></tr></tbody>';
+  document.getElementById('box-summary-wrap').innerHTML='<div class="loading">加载中…</div>';
   try{
     [tableData, arrivalDates] = await Promise.all([
       api('/api/boxes/table'),
       api('/api/arrivals/dates')
     ]);
     renderDateBar();
-    renderTable();
-  }catch{ document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:30px;color:var(--muted)">加载失败</td></tr></tbody>'; }
+    renderBoxViews();
+  }catch{
+    document.getElementById('box-table').innerHTML='<tbody><tr><td style="border:none;text-align:center;padding:30px;color:var(--muted)">加载失败</td></tr></tbody>';
+    document.getElementById('box-summary-wrap').innerHTML='<div class="summary-empty">加载失败</div>';
+  }
+}
+
+function setBoxView(view){
+  boxView=view;
+  document.getElementById('box-view-overview').classList.toggle('on',view==='overview');
+  document.getElementById('box-view-summary').classList.toggle('on',view==='summary');
+  renderBoxViews();
+}
+
+function renderBoxViews(){
+  document.getElementById('box-table-wrap').style.display=boxView==='overview'?'block':'none';
+  document.getElementById('box-summary-wrap').style.display=boxView==='summary'?'block':'none';
+  renderTable();
+  renderBoxSummary();
 }
 
 function renderDateBar(){
@@ -822,12 +880,12 @@ function renderDateBar(){
 function filterByDate(date){
   selArrDate = selArrDate===date ? null : date;
   renderDateBar();
-  renderTable();
+  renderBoxViews();
   updateStatsBar();
 }
 function selectShipmentDate(date){
   selShipmentDate = selShipmentDate===date ? null : date;
-  renderTable();
+  renderBoxViews();
   updateStatsBar();
 }
 async function fillRemainingShipment(date){
@@ -902,6 +960,166 @@ function renderTable(){
   }
   tbody+='</tbody>';
   document.getElementById('box-table').innerHTML=thead+tbody;
+}
+
+function buildBoxSummary(){
+  if(!tableData?.shipment_dates?.length) return [];
+  const result=[];
+  for(const sd of tableData.shipment_dates){
+    const cells=Object.values(tableData.table?.[sd]||{})
+      .filter(c=>c && c.box_code && c.source!=='gap' && (c.shipped||c.arrived))
+      .sort((a,b)=>String(a.box_code).localeCompare(String(b.box_code)));
+    const byCode=new Map();
+    for(const cell of cells){
+      const code=cell.type_code||'未分类';
+      if(!byCode.has(code)) byCode.set(code,{shipDate:sd,display:tableData.date_meta?.[sd]?.display||sd,code,boxes:[],arrivals:new Map(),missing:[]});
+      const group=byCode.get(code);
+      group.boxes.push(cell.box_code);
+      if(cell.arrived&&cell.arrival_date){
+        if(!group.arrivals.has(cell.arrival_date)) group.arrivals.set(cell.arrival_date,[]);
+        group.arrivals.get(cell.arrival_date).push(cell.box_code);
+      }else{
+        group.missing.push(cell.box_code);
+      }
+    }
+    const rows=[...byCode.values()].map(g=>({
+      ...g,
+      boxes:[...new Set(g.boxes)],
+      missing:[...new Set(g.missing)],
+      arrivalGroups:[...g.arrivals.entries()]
+        .map(([arrivalDate,codes])=>({arrivalDate,codes:[...new Set(codes)].sort()}))
+        .sort((a,b)=>a.arrivalDate.localeCompare(b.arrivalDate))
+    }));
+    if(rows.length) result.push({shipDate:sd,display:tableData.date_meta?.[sd]?.display||sd,rows});
+  }
+  return result;
+}
+
+function summaryKey(shipDate, code, bucket){
+  return `${shipDate}|${code}|${bucket}`;
+}
+
+function renderBoxSummary(){
+  const wrap=document.getElementById('box-summary-wrap');
+  const groups=buildBoxSummary();
+  if(!groups.length){ wrap.innerHTML='<div class="summary-empty">暂无发货箱子记录</div>'; return; }
+  wrap.innerHTML=`<div class="summary-stack">${groups.map(group=>{
+    const shipped=group.rows.reduce((sum,row)=>sum+row.boxes.length,0);
+    const arrived=group.rows.reduce((sum,row)=>sum+row.arrivalGroups.reduce((s,g)=>s+g.codes.length,0),0);
+    const missing=group.rows.reduce((sum,row)=>sum+row.missing.length,0);
+    return `<section class="summary-card">
+      <div class="summary-card-hd">
+        <div><div class="summary-date">${group.display}</div><div class="summary-meta">发货 ${shipped} 箱，已到 ${arrived} 箱，未到 ${missing} 箱</div></div>
+        <button class="btn btn-outline btn-sm" onclick="selectSummaryCodes('${group.shipDate}','__all__','all')">选择本发货日全部</button>
+      </div>
+      <table class="summary-table">
+        <thead><tr><th style="width:120px">发货日期</th><th style="width:90px">代号</th><th style="width:90px">发货箱数</th><th>到货日期批次</th><th style="width:120px">未到箱数</th><th style="width:130px">操作</th></tr></thead>
+        <tbody>${group.rows.map((row,idx)=>{
+          const hasSelDate=!!(selArrDate&&row.arrivalGroups.some(g=>g.arrivalDate===selArrDate));
+          return `<tr class="${row.missing.length?'summary-row-incomplete':''} ${hasSelDate?'summary-row-date-on':''}">
+            <td>${idx===0?group.display:''}</td>
+            <td><span class="summary-code">${row.code}</span></td>
+            <td><b>${row.boxes.length}</b> 箱</td>
+            <td><div class="summary-batches">${row.arrivalGroups.map(ag=>{
+              const key=summaryKey(row.shipDate,row.code,ag.arrivalDate);
+              const on=summaryExpandedKey===key||selArrDate===ag.arrivalDate;
+              return `<button class="summary-chip arrived ${on?'on':''}" onclick="toggleSummaryBatch('${row.shipDate}','${row.code}','${ag.arrivalDate}',true)">${ag.arrivalDate}<b>${ag.codes.length}</b>箱</button>`;
+            }).join('')||'<span style="color:var(--muted)">暂无到货</span>'}</div></td>
+            <td>${row.missing.length?`<button class="summary-chip missing ${summaryExpandedKey===summaryKey(row.shipDate,row.code,'__missing__')?'on':''}" onclick="toggleSummaryBatch('${row.shipDate}','${row.code}','__missing__',false)">未到 <b>${row.missing.length}</b> 箱</button>`:'<span class="badge b-s">已全到</span>'}</td>
+            <td><button class="btn btn-ghost btn-sm" onclick="selectSummaryCodes('${row.shipDate}','${row.code}','all')">选择全部</button></td>
+          </tr>${renderSummaryExpanded(row)}`;
+        }).join('')}</tbody>
+      </table>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function getSummaryRow(shipDate, code){
+  for(const group of buildBoxSummary()){
+    if(group.shipDate!==shipDate) continue;
+    if(code==='__all__') return {shipDate,code,boxes:group.rows.flatMap(r=>r.boxes),missing:group.rows.flatMap(r=>r.missing),arrivalGroups:[]};
+    const row=group.rows.find(r=>r.code===code);
+    if(row) return row;
+  }
+  return null;
+}
+
+function getSummaryCodes(shipDate, code, bucket){
+  const row=getSummaryRow(shipDate, code);
+  if(!row) return [];
+  if(bucket==='all') return row.boxes;
+  if(bucket==='__missing__') return row.missing;
+  return row.arrivalGroups.find(g=>g.arrivalDate===bucket)?.codes || [];
+}
+
+function renderSummaryExpanded(row){
+  const missingKey=summaryKey(row.shipDate,row.code,'__missing__');
+  let bucket=null, title='', codes=[];
+  if(summaryExpandedKey===missingKey){
+    bucket='__missing__'; title=`${row.code} 未到箱号`; codes=row.missing;
+  }else{
+    const ag=row.arrivalGroups.find(g=>summaryExpandedKey===summaryKey(row.shipDate,row.code,g.arrivalDate));
+    if(ag){ bucket=ag.arrivalDate; title=`${row.code} ${ag.arrivalDate} 到货箱号`; codes=ag.codes; }
+  }
+  if(!bucket) return '';
+  const colspan=6;
+  const checkedCount=codes.filter(c=>batchSel.has(c)).length;
+  return `<tr><td colspan="${colspan}" class="summary-expand">
+    <div class="summary-expand-hd">
+      <div><b>${title}</b> <span style="color:var(--muted)">共 ${codes.length} 箱，已选 ${checkedCount} 箱</span></div>
+      <div class="row">
+        <button class="btn btn-primary btn-sm" onclick="selectSummaryCodes('${row.shipDate}','${row.code}','${bucket}')">全选这一批</button>
+        <button class="btn btn-success btn-sm" onclick="selectSummaryCodes('${row.shipDate}','${row.code}','${bucket}');document.getElementById('batch-date').focus()">批量设置到货日期</button>
+        ${bucket!=='__missing__'?`<button class="btn btn-danger btn-sm" onclick="selectSummaryCodes('${row.shipDate}','${row.code}','${bucket}');clearBatchArrivalDate()">批量清除到货日期</button>`:''}
+        <button class="btn btn-outline btn-sm" onclick="jumpSummaryToOverview('${row.shipDate}','${row.code}','${bucket}')">总览高亮</button>
+      </div>
+    </div>
+    <div class="summary-box-list">${codes.map(code=>`<label class="summary-box-tag"><input type="checkbox" ${batchSel.has(code)?'checked':''} onchange="toggleSummaryCode('${code}')">${code}</label>`).join('')}</div>
+  </td></tr>`;
+}
+
+function toggleSummaryBatch(shipDate, code, bucket, arrived){
+  const key=summaryKey(shipDate,code,bucket);
+  summaryExpandedKey=summaryExpandedKey===key?null:key;
+  if(arrived && bucket!=='__missing__'){
+    selArrDate=bucket;
+    renderDateBar();
+    updateStatsBar();
+  }
+  renderBoxSummary();
+}
+
+function syncBatchBar(){
+  document.getElementById('batch-cnt').textContent=batchSel.size;
+  document.getElementById('batch-bar').classList.toggle('on',batchSel.size>0||batchMode);
+  if(batchMode) document.getElementById('batch-bar').classList.add('on');
+}
+
+function selectSummaryCodes(shipDate, code, bucket){
+  const codes=getSummaryCodes(shipDate, code, bucket);
+  if(!codes.length){ toast('没有可选择的箱子','err'); return; }
+  codes.forEach(c=>batchSel.add(c));
+  syncBatchBar();
+  renderBoxViews();
+}
+
+function toggleSummaryCode(code){
+  batchSel.has(code)?batchSel.delete(code):batchSel.add(code);
+  syncBatchBar();
+  renderBoxSummary();
+}
+
+function jumpSummaryToOverview(shipDate, code, bucket){
+  const codes=getSummaryCodes(shipDate, code, bucket);
+  if(!codes.length){ toast('没有可高亮的箱子','err'); return; }
+  codes.forEach(c=>batchSel.add(c));
+  selShipmentDate=shipDate;
+  setBoxView('overview');
+  updateStatsBar();
+  setTimeout(()=>{
+    const first=document.querySelector(`[data-code="${codes[0]}"]`);
+    if(first) first.scrollIntoView({behavior:'smooth',block:'center',inline:'center'});
+  },50);
 }
 
 function jumpBox(){
@@ -1069,23 +1287,21 @@ function toggleBatch(){
   btn.className=batchMode?'btn btn-danger':'btn btn-warn';
   document.getElementById('box-side').style.display='none';
   if(!batchMode) hideBatch();
-  renderTable();
+  renderBoxViews();
 }
 function hideBatch(){ document.getElementById('batch-bar').classList.remove('on'); }
 function toggleBatchCell(code){
   batchSel.has(code)?batchSel.delete(code):batchSel.add(code);
-  document.getElementById('batch-cnt').textContent=batchSel.size;
-  document.getElementById('batch-bar').classList.toggle('on',batchSel.size>0||batchMode);
-  if(batchMode) document.getElementById('batch-bar').classList.add('on');
+  syncBatchBar();
   // Update cell visual
   const cell=document.querySelector(`[data-code="${code}"]`);
   if(cell){ if(batchSel.has(code)){cell.className='cell-batch-sel';}else{const a=cell.dataset.arrived==='true'; cell.className=selArrDate&&cell.dataset.adate===selArrDate?'cell-hl':(a?'cell-arrived':'cell-missing');} }
-  document.getElementById('batch-cnt').textContent=batchSel.size;
+  renderBoxSummary();
 }
 function clearBatchSel(){
   batchSel.clear();
-  document.getElementById('batch-cnt').textContent='0';
-  renderTable();
+  syncBatchBar();
+  renderBoxViews();
 }
 async function applyBatch(){
   const date=document.getElementById('batch-date').value;
@@ -1096,6 +1312,16 @@ async function applyBatch(){
     toast(`✅ 已更新${r.updated}条，新增${r.created}条`,'ok');
     clearBatchSel(); await loadBoxData();
   }catch{ toast('操作失败','err'); }
+}
+async function clearBatchArrivalDate(){
+  if(!batchSel.size){ toast('请先选择箱子','err'); return; }
+  showConfirm(`确认将已选 ${batchSel.size} 个箱子改回在途？`, async()=>{
+    try{
+      const r=await api('/api/arrivals/bulk-clear',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({box_codes:[...batchSel]})});
+      toast(`✅ 已清除 ${r.deleted||0} 条到货记录`,'ok');
+      clearBatchSel(); await loadBoxData();
+    }catch{ toast('操作失败','err'); }
+  });
 }
 
 // ════════════════════════════

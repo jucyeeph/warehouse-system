@@ -567,3 +567,40 @@ test('shipment segments preserve split supplier order in overview and table meta
   const table = await getJson('/api/boxes/table');
   assert.deepEqual(table.body.date_meta['20260523'].segments.map(s => `${s.type_code}:${s.count}`), ['DSH:26', 'LCC:3', 'DSH:1']);
 });
+
+test('bulk clear arrivals removes selected boxes and returns them to in-transit table state', async () => {
+  const payload = {
+    shipment_date: '2026-05-25',
+    total_count: 3,
+    items: [{ type_code: 'DSH', count: 3 }],
+    operator: 'tester'
+  };
+  const shipped = await postJson('/api/shipments/batch', payload);
+  assert.equal(shipped.status, 200);
+
+  const bulk = await fetch(`http://127.0.0.1:${PORT}/api/arrivals/bulk`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      box_codes: ['20260525DSH001', '20260525DSH002'],
+      arrival_date: '2026-06-01',
+      worker_name: 'tester'
+    })
+  });
+  assert.equal(bulk.status, 200);
+
+  const cleared = await fetch(`http://127.0.0.1:${PORT}/api/arrivals/bulk-clear`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ box_codes: ['20260525DSH001', '20260525DSH002'] })
+  });
+  const body = await cleared.json();
+  assert.equal(cleared.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.deleted, 2);
+
+  const table = await getJson('/api/boxes/table');
+  assert.equal(table.body.table['20260525'][1].arrived, false);
+  assert.equal(table.body.table['20260525'][2].arrived, false);
+  assert.equal(table.body.date_meta['20260525'].remaining_count, 3);
+});

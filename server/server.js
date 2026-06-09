@@ -1205,6 +1205,20 @@ app.put('/api/arrivals/bulk', (req, res) => {
   })();
   res.json({ success:true, updated, created });
 });
+// Bulk clear arrival records by box_code (used by admin batch tools)
+app.delete('/api/arrivals/bulk-clear', (req, res) => {
+  const { box_codes } = req.body || {};
+  if (!box_codes || !Array.isArray(box_codes))
+    return res.status(400).json({ error: 'Missing required parameters' });
+  let deleted = 0;
+  db.transaction(() => {
+    for (const code of box_codes) {
+      const r = db.prepare('DELETE FROM arrivals WHERE box_code=?').run(code);
+      deleted += r.changes || 0;
+    }
+  })();
+  res.json({ success:true, deleted });
+});
 
 // ════════════════════════════════════════
 // UNBOXING
