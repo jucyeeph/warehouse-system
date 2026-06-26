@@ -41,3 +41,19 @@ test('admin manual PO requires existing arrival-date selection and supports imag
   assert.match(adminHtml, /ondrop="onMpoDrop\(event\)"/);
   assert.match(adminHtml, /只能上传图片文件/);
 });
+
+test('admin box manager keeps overview and adds summary view with shared batch actions', () => {
+  assert.match(adminHtml, /id="box-view-overview"[^>]*>总览视图/);
+  assert.match(adminHtml, /id="box-view-summary"[^>]*>总结视图/);
+  assert.match(adminHtml, /id="box-table-wrap"/);
+  assert.match(adminHtml, /id="box-summary-wrap"/);
+  assert.match(adminHtml, /function buildBoxSummary/);
+  assert.match(adminHtml, /function selectSummaryCodes/);
+  assert.match(adminHtml, /function clearBatchArrivalDate/);
+  assert.match(adminHtml, /\/api\/arrivals\/bulk-clear/);
+});
+
+test('admin box summary highlights rows that still have in-transit boxes', () => {
+  assert.match(adminHtml, /summary-row-incomplete/);
+  assert.match(adminHtml, /row\.missing\.length\?'summary-row-incomplete'/);
+});
