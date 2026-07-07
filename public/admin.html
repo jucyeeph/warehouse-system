@@ -318,6 +318,16 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
 .modal-overlay.show{display:flex}
 .modal-box{background:#fff;border-radius:14px;padding:20px;width:calc(100% - 40px);max-width:440px;max-height:90vh;overflow-y:auto}
 .modal-title{font-size:15px;font-weight:800;margin-bottom:14px}
+.box-po-modal-box{max-width:860px;padding:0;overflow:hidden}
+.box-po-layout{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);height:min(78vh,640px)}
+.box-po-list{border-right:1px solid var(--border);overflow:auto;background:#f8fafc}
+.box-po-preview{overflow:auto;padding:14px;background:#fff}
+.box-po-record{display:flex;gap:9px;align-items:flex-start;width:100%;border:none;border-bottom:1px solid var(--border);background:#fff;padding:10px 12px;text-align:left;cursor:pointer;font-family:inherit}
+.box-po-record:hover,.box-po-record.on{background:#eff6ff}
+.box-po-record.on{box-shadow:inset 3px 0 0 var(--primary)}
+.box-po-record .ti{width:50px;height:50px}
+.box-po-img{width:100%;max-height:460px;object-fit:contain;border:1px solid var(--border);border-radius:10px;background:#f8fafc;display:block;cursor:zoom-in}
+@media (max-width:760px){.box-po-layout{grid-template-columns:1fr;height:auto;max-height:82vh}.box-po-list{max-height:260px;border-right:none;border-bottom:1px solid var(--border)}}
 .mfg{margin-bottom:11px}
 .mfg label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
 .modal-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
@@ -710,6 +720,23 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   </div>
 </div>
 
+<!-- Box PO Records Modal -->
+<div class="modal-overlay" id="box-po-modal">
+  <div class="modal-box box-po-modal-box">
+    <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fbfdff">
+      <div>
+        <div class="modal-title" id="box-po-title" style="margin-bottom:2px">箱子采购单</div>
+        <div id="box-po-sub" style="font-size:12px;color:var(--muted)"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeBoxPoModal()">✕ 关闭</button>
+    </div>
+    <div class="box-po-layout">
+      <div class="box-po-list" id="box-po-list"><div class="loading">加载中…</div></div>
+      <div class="box-po-preview" id="box-po-preview"><div class="empty"><div class="empty-ic">📋</div>点击左侧采购单记录</div></div>
+    </div>
+  </div>
+</div>
+
 <!-- Edit Modal -->
 <div class="modal-overlay" id="editModal">
   <div class="modal-box"><div class="modal-title" id="editTitle">编辑</div><div id="editBody"></div><div class="modal-actions" id="editActions"></div></div>
@@ -742,6 +769,7 @@ let boxView='overview', summaryExpandedKey=null;
 let shipmentOverview=[], poOverview=[];
 let errPage=1, errPageSize=50, errTotal=0, poPage=1, poPageSize=50, poTotal=0;
 let currentPoGroup=null, currentPoRecord=null;
+let currentBoxPoRecords=[], currentBoxPoRecord=null;
 let cellPopupCode=null;
 
 // ════════════════════════════
@@ -1134,6 +1162,7 @@ function jumpBox(){
 // Cell click
 function onCellClick(code, arrived, adate, event){
   if(batchMode){ toggleBatchCell(code); return; }
+  if(arrived){ showBoxPoModal(code, adate); return; }
   // Show popup near cell
   const rect=event.target.getBoundingClientRect();
   showCellPopup(code, arrived, adate, rect);
@@ -1171,6 +1200,59 @@ async function saveCellDate(){
       await loadBoxData();
     } else toast('❌ 操作失败','err');
   }catch{ toast('❌ 网络错误','err'); }
+}
+
+async function showBoxPoModal(code, adate){
+  closeCellPopup();
+  currentBoxPoRecords=[];
+  currentBoxPoRecord=null;
+  document.getElementById('box-po-title').textContent=`箱子 ${code} 的采购单`;
+  document.getElementById('box-po-sub').textContent=adate?`到货日期：${adate}`:'已到货';
+  document.getElementById('box-po-list').innerHTML='<div class="loading">加载中…</div>';
+  document.getElementById('box-po-preview').innerHTML='<div class="empty"><div class="empty-ic">📋</div>点击左侧采购单记录</div>';
+  document.getElementById('box-po-modal').classList.add('show');
+  try{
+    const d=await api(`/api/box/${encodeURIComponent(code)}`);
+    currentBoxPoRecords=d.po_records||[];
+    if(!currentBoxPoRecords.length){
+      document.getElementById('box-po-list').innerHTML='<div class="empty"><div class="empty-ic">📭</div>这个箱子暂无采购单记录</div>';
+      document.getElementById('box-po-preview').innerHTML=`
+        <div class="empty"><div class="empty-ic">📦</div>暂无采购单图片</div>
+        <div class="modal-actions" style="justify-content:center"><button class="btn btn-outline" onclick="showCellPopup('${code}', true, '${adate||''}', {left:window.innerWidth/2-120, right:window.innerWidth/2+120, top:120, bottom:160});closeBoxPoModal()">修改到货日期</button></div>`;
+      return;
+    }
+    document.getElementById('box-po-list').innerHTML=currentBoxPoRecords.map((p,idx)=>`
+      <button class="box-po-record" type="button" onclick="selectBoxPoRecord(${idx})">
+        <span class="ti">${p.photo_path?photoImg(p.photo_path):'📄'}</span>
+        <span style="min-width:0;flex:1">
+          <span class="tc">${esc(p.po_code)}</span>
+          <span class="tm">录入：${esc(p.created_at||'—')}<br>备注：${esc(p.notes||'—')}${p.error_count>0?`<br><span style="color:#b91c1c;font-weight:800">关联错误订单 ${p.error_count} 条</span>`:''}</span>
+        </span>
+      </button>`).join('');
+    selectBoxPoRecord(0);
+  }catch{
+    document.getElementById('box-po-list').innerHTML='<div class="empty">加载失败</div>';
+  }
+}
+function closeBoxPoModal(){
+  document.getElementById('box-po-modal').classList.remove('show');
+  currentBoxPoRecords=[];
+  currentBoxPoRecord=null;
+}
+function selectBoxPoRecord(idx){
+  if(!currentBoxPoRecords[idx]) return;
+  currentBoxPoRecord=idx;
+  document.querySelectorAll('#box-po-list .box-po-record').forEach((el,i)=>el.classList.toggle('on',i===idx));
+  const r=currentBoxPoRecords[idx];
+  document.getElementById('box-po-preview').innerHTML=`
+    ${r.photo_path?photoImg(r.photo_path,{className:'box-po-img'}):'<div class="empty"><div class="empty-ic">📄</div>无图片</div>'}
+    <div class="mg" style="margin-top:12px">
+      <span class="lk">采购单号</span><span class="code">${esc(r.po_code)}</span>
+      <span class="lk">箱码</span><span class="code">${esc(r.box_code||'—')}</span>
+      <span class="lk">录入时间</span><span>${esc(r.created_at||'—')}</span>
+      <span class="lk">备注</span><span>${esc(r.notes||'—')}</span>
+      <span class="lk">错误订单</span><span>${Number(r.error_count||0)>0?`<span class="badge b-e">已关联 ${r.error_count} 条</span>`:'无'}</span>
+    </div>`;
 }
 
 // Box side panel
@@ -1642,8 +1724,31 @@ function selectPoGroup(arrivalDate, poCode){
   currentPoRecord=null;
   renderPoLeft();
   const mid=document.getElementById('po-mid');
-  mid.innerHTML=po.records.map((r,idx)=>`<div class="po-file-item ${r.error_count>0?'err':''}" onclick="selectPoRecord(${idx})"><div style="font-weight:700">${r.photo_path ? r.photo_path.split('/').pop() : '无图片'}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">箱码：${r.box_code||'—'}<br>录入：${r.created_at}${r.error_count>0?`<br><span style='color:#b91c1c;font-weight:700'>存在关联错误订单</span>`:''}</div></div>`).join('') || '<div class="empty">暂无图片记录</div>';
+  mid.innerHTML=po.records.map((r,idx)=>`<div class="po-file-item ${r.error_count>0?'err':''}" tabindex="0" onclick="selectPoRecord(${idx})" onkeydown="handlePoFileKeydown(event,${idx})"><div style="font-weight:700">${r.photo_path ? r.photo_path.split('/').pop() : '无图片'}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">箱码：${r.box_code||'—'}<br>录入：${r.created_at}${r.error_count>0?`<br><span style='color:#b91c1c;font-weight:700'>存在关联错误订单</span>`:''}</div></div>`).join('') || '<div class="empty">暂无图片记录</div>';
   document.getElementById('po-right').innerHTML='<div class="empty"><div class="empty-ic">🖼️</div>点击中间图片名</div>';
+}
+function handlePoFileKeydown(event, idx){
+  if(event.key!=='ArrowDown'&&event.key!=='ArrowUp') return;
+  event.preventDefault();
+  const max=(currentPoGroup?.records?.length||0)-1;
+  if(max<0) return;
+  const nextIdx=event.key==='ArrowDown'?Math.min(idx+1,max):Math.max(idx-1,0);
+  selectPoRecord(nextIdx);
+  const next=document.querySelectorAll('#po-mid .po-file-item')[nextIdx];
+  if(next){ next.focus({preventScroll:true}); scrollPoFileIntoMiddlePane(next); }
+}
+function scrollPoFileIntoMiddlePane(item){
+  const mid=document.getElementById('po-mid');
+  if(!mid||!item) return;
+  const itemTop=item.offsetTop;
+  const itemBottom=itemTop+item.offsetHeight;
+  const visibleTop=mid.scrollTop;
+  const visibleBottom=visibleTop+mid.clientHeight;
+  if(itemTop<visibleTop){
+    mid.scrollTop=itemTop;
+  }else if(itemBottom>visibleBottom){
+    mid.scrollTop=itemBottom-mid.clientHeight;
+  }
 }
 function selectPoRecord(idx){
   if(!currentPoGroup?.records?.[idx]) return;

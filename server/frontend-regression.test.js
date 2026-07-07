@@ -57,3 +57,25 @@ test('admin box summary highlights rows that still have in-transit boxes', () =>
   assert.match(adminHtml, /summary-row-incomplete/);
   assert.match(adminHtml, /row\.missing\.length\?'summary-row-incomplete'/);
 });
+
+test('admin PO image list supports keyboard navigation', () => {
+  assert.match(adminHtml, /function handlePoFileKeydown/);
+  assert.match(adminHtml, /event\.key==='ArrowDown'/);
+  assert.match(adminHtml, /selectPoRecord\(nextIdx\)/);
+  assert.match(adminHtml, /tabindex="0"/);
+});
+
+test('admin PO keyboard navigation scrolls only the middle image list pane', () => {
+  assert.match(adminHtml, /function scrollPoFileIntoMiddlePane/);
+  assert.match(adminHtml, /next\.focus\(\{preventScroll:true\}\)/);
+  assert.match(adminHtml, /mid\.scrollTop/);
+  assert.doesNotMatch(adminHtml, /next\.scrollIntoView/);
+});
+
+test('admin arrived box cells open a PO list modal with clickable thumbnails', () => {
+  assert.match(adminHtml, /id="box-po-modal"/);
+  assert.match(adminHtml, /function showBoxPoModal/);
+  assert.match(adminHtml, /if\(arrived\)\{ showBoxPoModal\(code, adate\); return; \}/);
+  assert.match(adminHtml, /function selectBoxPoRecord/);
+  assert.match(adminHtml, /box-po-record/);
+});
