@@ -53,6 +53,10 @@ test('admin box manager keeps overview and adds summary view with shared batch a
   assert.match(adminHtml, /\/api\/arrivals\/bulk-clear/);
 });
 
+test('admin box manager renders only the active view', () => {
+  assert.match(adminHtml, /if\(boxView==='overview'\)\s*renderTable\(\);\s*else\s*renderBoxSummary\(\);/);
+});
+
 test('admin box summary highlights rows that still have in-transit boxes', () => {
   assert.match(adminHtml, /summary-row-incomplete/);
   assert.match(adminHtml, /row\.missing\.length\?'summary-row-incomplete'/);

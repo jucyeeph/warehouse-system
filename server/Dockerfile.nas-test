@@ -1,11 +1,10 @@
-# NAS 测试端快速构建镜像
-# 说明：个人 NAS 192.168.31.89 上已有 warehouse-nasb-warehouse-admin:latest 镜像，
-# 里面已经装好 Node 依赖和 better-sqlite3，测试端只覆盖最新 server.js，避免每次在 NAS 上重新 apk/npm 编译。
+# NAS 测试端离线快速构建镜像
+# 测试 NAS 会保留上一次成功构建的测试镜像，其中已有 Node 依赖、
+# better-sqlite3 和 sharp。新版本以它为基础覆盖应用代码，避免依赖外网镜像仓库。
 
-FROM warehouse-nasb-warehouse-admin:latest
+FROM ddq-warehouse-system-test-warehouse-test:latest
 
 WORKDIR /app
-RUN npm install --omit=dev --no-save sharp@^0.34.5
 
 COPY server.js thumbnail-service.js thumbnails-cli.js ./
 

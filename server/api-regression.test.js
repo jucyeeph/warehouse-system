@@ -568,6 +568,17 @@ test('shipment segments preserve split supplier order in overview and table meta
   assert.deepEqual(table.body.date_meta['20260523'].segments.map(s => `${s.type_code}:${s.count}`), ['DSH:26', 'LCC:3', 'DSH:1']);
 });
 
+test('box table uses gzip when the client supports it', async () => {
+  const response = await fetch(`http://127.0.0.1:${PORT}/api/boxes/table`, {
+    headers: { 'Accept-Encoding': 'gzip' }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'gzip');
+  assert.match(response.headers.get('vary') || '', /Accept-Encoding/i);
+  const body = await response.json();
+  assert.ok(Array.isArray(body.shipment_dates));
+});
+
 test('bulk clear arrivals removes selected boxes and returns them to in-transit table state', async () => {
   const payload = {
     shipment_date: '2026-05-25',

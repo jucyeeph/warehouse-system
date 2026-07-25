@@ -364,6 +364,74 @@ textarea.inp{height:auto;padding:8px 10px;resize:vertical}
   .tnb::first-letter{font-size:15px}
   #stats-bar,#batch-bar{left:76px}
 }
+
+/* ── 2026 visual polish: keep the existing workflow, improve hierarchy ── */
+:root{
+  --primary:#2f5bea;--primary-weak:#eef3ff;--success:#16845b;--danger:#c93f4c;--warning:#b96a16;
+  --bg:#f4f6fa;--card:#fff;--text:#172033;--muted:#667085;--border:#dce2ea;
+  --nav:#111c2f;--nav-soft:#1d2d47;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 10px 28px rgba(16,24,40,.06);
+}
+body{font-feature-settings:"tnum" 1,"ss01" 1;background:
+  radial-gradient(circle at 82% 0,rgba(47,91,234,.055),transparent 30%),var(--bg)}
+.hdr{height:var(--hdr);padding:0 28px;background:rgba(255,255,255,.96);backdrop-filter:blur(14px)}
+.hdr h1{font-size:19px;letter-spacing:-.02em}
+.hdr h1::after{letter-spacing:.02em;margin-top:3px}
+.sc{background:#fff;border-color:#d8dee8;border-radius:10px;padding:7px 11px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.tabnav{background:linear-gradient(180deg,#111c2f 0%,#14233a 100%);padding:20px 12px 16px}
+.tabnav::before{content:"WAREHOUSE  ·  OPS";font-size:13px;letter-spacing:.11em;padding:4px 11px 17px;margin-bottom:11px}
+.tnb{height:44px;border-radius:10px;padding:0 13px;font-weight:720;color:#b9c5d7;letter-spacing:.01em}
+.tnb:hover{background:rgba(255,255,255,.075)}
+.tnb.on{background:linear-gradient(135deg,#3c66ee,#2f5bea);box-shadow:0 8px 22px rgba(15,35,90,.42)}
+#chrome{background:rgba(255,255,255,.94);backdrop-filter:blur(12px)}
+.fbar{min-height:54px;padding:9px 28px;gap:9px}
+#date-bar{min-height:54px;padding:9px 28px;background:#f8f9fc}
+#ca{padding:22px 24px 28px}
+.module-head{align-items:center;margin-bottom:16px}
+.module-title{font-size:20px;letter-spacing:-.025em}
+.module-sub{font-size:12.5px;line-height:1.6;max-width:760px}
+.card,.table-card,.summary-card,.resolved-section,#box-table-wrap{border-radius:12px;border-color:#dfe4ec;box-shadow:var(--shadow)}
+.card-hd{padding:13px 17px;background:#fafbfc}
+.card-body{padding:17px}
+.card-title{font-size:14px;letter-spacing:-.01em}
+.inp{height:36px;border-width:1px;border-radius:9px;padding:0 11px;background:#fff;box-shadow:0 1px 1px rgba(16,24,40,.02)}
+.inp:hover{border-color:#c4ccd8}
+.inp:focus{border-color:#6f8ff3;box-shadow:0 0 0 3px rgba(47,91,234,.13)}
+.btn{height:34px;border-radius:9px;padding:0 12px;font-weight:700;transition:transform .12s,box-shadow .12s,filter .12s}
+.btn:hover{filter:brightness(.985);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:linear-gradient(135deg,#3e68ef,#2f5bea);box-shadow:0 4px 10px rgba(47,91,234,.22)}
+.btn-success{background:#16845b}.btn-danger{background:#c93f4c}.btn-warn{background:#b96a16}
+.btn-ghost{background:#eef1f5;color:#344054}
+.btn-outline{border-width:1px;background:#f9fbff}
+.date-btn{height:36px;border-width:1px;border-radius:9px;font-weight:700}
+.date-btn.on{background:#2f5bea;box-shadow:0 4px 10px rgba(47,91,234,.18)}
+.view-switch,.legend-chip{border-radius:9px}
+.view-switch button{height:32px}
+.badge{border-radius:999px;padding:3px 8px}
+.etbl th,.summary-table th{background:#f7f8fa;color:#697386;letter-spacing:.045em}
+.etbl td{padding-top:10px;padding-bottom:10px}
+.erow:hover td{background:#f5f8ff}
+.erow.sel td{background:#eef3ff}
+.loading{white-space:nowrap;min-width:150px}
+#box-table .loading{min-width:240px;height:120px;vertical-align:middle}
+#box-table thead th{background:#253651;border-right-color:#3a4b67}
+#box-table thead th.seq-th{background:#16243a}
+#box-table tbody td.seq-td{background:#f7f8fa}
+#box-table{width:100%}
+#box-table tbody:only-child tr:only-child td:only-child{min-width:240px;white-space:nowrap}
+.empty{border-radius:10px;background:linear-gradient(180deg,#fff,#fafbfc)}
+.modal-box,.confirm-box{box-shadow:0 24px 70px rgba(15,23,42,.22)}
+.modal-overlay,.confirm-overlay{backdrop-filter:blur(3px)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:3px solid rgba(47,91,234,.28);outline-offset:2px
+}
+*{scrollbar-width:thin;scrollbar-color:#c8d0dc transparent}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+@media (max-width:1100px){
+  .tabnav::before{content:"WH"}
+  #ca{padding:18px}
+}
 </style>
 </head>
 <body>
@@ -891,8 +959,8 @@ function setBoxView(view){
 function renderBoxViews(){
   document.getElementById('box-table-wrap').style.display=boxView==='overview'?'block':'none';
   document.getElementById('box-summary-wrap').style.display=boxView==='summary'?'block':'none';
-  renderTable();
-  renderBoxSummary();
+  if(boxView==='overview') renderTable();
+  else renderBoxSummary();
 }
 
 function renderDateBar(){

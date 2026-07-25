@@ -162,6 +162,72 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .toast.show{opacity:1}
 
 input[type=date].inp{-webkit-appearance:none}
+
+/* ── 2026 visual polish: one coherent operations product ── */
+:root{
+  --primary:#2f5bea;--success:#16845b;--danger:#c93f4c;--warning:#b96a16;
+  --bg:#f4f6fa;--card:#fff;--text:#172033;--muted:#667085;--border:#dce2ea;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 12px 30px rgba(16,24,40,.07);
+}
+body{font-feature-settings:"tnum" 1,"ss01" 1;background:
+  radial-gradient(circle at 50% -10%,rgba(47,91,234,.08),transparent 32%),var(--bg)}
+#nav-screen{
+  background:
+    radial-gradient(circle at 18% 12%,rgba(104,135,255,.34),transparent 28%),
+    radial-gradient(circle at 88% 86%,rgba(30,64,175,.42),transparent 30%),
+    linear-gradient(150deg,#162a59 0%,#2447b8 48%,#2f5bea 100%);
+  padding:38px 20px
+}
+.nav-inner{max-width:440px}
+.nav-logo{font-size:48px;margin-bottom:14px;filter:drop-shadow(0 10px 20px rgba(8,20,52,.25))}
+.nav-title{font-size:29px;font-weight:820;letter-spacing:-.035em;margin-bottom:8px}
+.nav-sub{font-size:14px;color:rgba(255,255,255,.72);margin-bottom:34px}
+.version-badge{padding:7px 13px;margin-bottom:19px;background:rgba(8,20,52,.26);border-color:rgba(255,255,255,.16);box-shadow:inset 0 1px rgba(255,255,255,.08)}
+.role-card{border-radius:16px;padding:20px 22px;margin-bottom:13px;background:rgba(255,255,255,.105);border-color:rgba(255,255,255,.2);box-shadow:0 14px 36px rgba(7,19,52,.16);backdrop-filter:blur(18px)}
+.role-card:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.38);transform:translateY(-2px)}
+.role-card:active{transform:scale(.985)}
+.role-title{font-size:17px;font-weight:750;letter-spacing:-.01em}
+.role-desc{font-size:12.5px;color:rgba(255,255,255,.7)}
+.role-arrow{font-size:24px;color:rgba(255,255,255,.66)}
+.screen-hdr{height:58px;background:linear-gradient(135deg,#2447b8,#2f5bea);padding:0 16px;box-shadow:0 5px 18px rgba(47,91,234,.25)}
+.hdr-back{border-radius:10px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12)}
+.hdr-title{font-size:16px;font-weight:750;letter-spacing:-.01em}
+.hdr-worker{border-radius:9px;padding:6px 11px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.16);font-weight:700}
+.tabs{border-bottom:1px solid var(--border);box-shadow:0 2px 8px rgba(16,24,40,.035)}
+.tab-btn{height:48px;font-weight:700;border-bottom-width:3px;margin-bottom:-1px}
+.screen-body{padding:18px 14px 28px}
+.panel{max-width:620px;margin:0 auto}
+.card{border-radius:14px;padding:19px;margin-bottom:16px;border:1px solid #e0e5ec;box-shadow:var(--shadow)}
+.card-title{font-size:16px;font-weight:780;letter-spacing:-.015em;margin-bottom:16px}
+.fg{margin-bottom:15px}
+.lbl{font-size:11px;letter-spacing:.055em;color:#697386;margin-bottom:6px}
+.inp,.ta{border-width:1px;border-radius:10px;border-color:#d7dee8;box-shadow:0 1px 1px rgba(16,24,40,.02)}
+.inp:hover,.ta:hover{border-color:#bdc6d3}
+.inp:focus,.ta:focus{border-color:#6f8ff3;box-shadow:0 0 0 3px rgba(47,91,234,.13)}
+.scan-btn,.btn{border-radius:10px;font-weight:720;transition:transform .12s,box-shadow .12s,filter .12s}
+.scan-btn{background:linear-gradient(135deg,#3e68ef,#2f5bea);box-shadow:0 5px 12px rgba(47,91,234,.2)}
+.btn-primary{background:linear-gradient(135deg,#3e68ef,#2f5bea);box-shadow:0 5px 13px rgba(47,91,234,.2)}
+.btn-success{background:#16845b}.btn-danger{background:#c93f4c}
+.btn-ghost{background:#eef1f5;color:#344054}
+.btn:active,.scan-btn:active{transform:scale(.985)}
+.flow-tip{border:1px solid #cdd9ff;background:#f1f5ff;color:#2949a8}
+.locked-box{background:#edfbf5;border-color:#6bcaa6}
+.po-row-card{background:#f8f9fb;border-width:1px;border-radius:12px;padding:13px}
+.photo-ph{background:#fbfcfe;border-color:#cfd6e1}
+.hist-item{border:1px solid #e1e6ed;box-shadow:0 3px 12px rgba(16,24,40,.045)}
+.hist-badge{border-radius:999px;padding:4px 9px}
+.overlay,.modal{backdrop-filter:blur(4px)}
+.sheet{border-radius:22px 22px 0 0;box-shadow:0 -20px 60px rgba(0,0,0,.2)}
+.modal-box{border-radius:16px;box-shadow:0 24px 70px rgba(15,23,42,.24)}
+.toast{box-shadow:0 10px 26px rgba(15,23,42,.2)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:3px solid rgba(111,143,243,.4);outline-offset:2px
+}
+@media (min-width:760px){
+  .screen-body{padding-top:28px}
+  .card{padding:24px}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
 </style>
 </head>
 <body>

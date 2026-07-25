@@ -3,6 +3,7 @@ const Database = require('better-sqlite3');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 const cors = require('cors');
 const XLSX = require('xlsx');
 const { startThumbnailScanner } = require('./thumbnail-service');
@@ -31,6 +32,21 @@ function fmtArrDate(d) {
   if (!d || d.length < 10) return d || '—';
   const [y,m,day] = d.split('-');
   return `${y}年${parseInt(m)}月${parseInt(day)}日`;
+}
+
+function sendJsonWithOptionalGzip(req, res, payload) {
+  const json = JSON.stringify(payload);
+  res.type('application/json');
+  res.vary('Accept-Encoding');
+  res.setHeader('Cache-Control', 'private, no-cache');
+  if (!req.acceptsEncodings('gzip')) {
+    return res.send(json);
+  }
+  zlib.gzip(json, { level: zlib.constants.Z_BEST_SPEED }, (error, compressed) => {
+    if (error) return res.send(json);
+    res.setHeader('Content-Encoding', 'gzip');
+    res.send(compressed);
+  });
 }
 
 function normalizeShipmentDate(input) {
@@ -1015,7 +1031,7 @@ app.get('/api/boxes/table', (req, res) => {
     };
   }
 
-  res.json({ shipment_dates, global_max_seq, table, date_meta });
+  sendJsonWithOptionalGzip(req, res, { shipment_dates, global_max_seq, table, date_meta });
 });
 
 app.get('/api/arrivals/dates', (req, res) => {
