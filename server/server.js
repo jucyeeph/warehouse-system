@@ -1373,8 +1373,9 @@ app.get('/api/po/overview', (req, res) => {
   const byDate = {};
   for (const row of rows) {
     const resolvedArrivalDate = resolvePoArrivalDate(row);
-    const r = { ...row, arrival_date: resolvedArrivalDate, group_arrival_date: resolvedArrivalDate };
-    const adate = r.group_arrival_date || '未关联到货';
+    const { box_arrival_date, ...publicRow } = row;
+    const r = { ...publicRow, arrival_date: resolvedArrivalDate };
+    const adate = resolvedArrivalDate || '未关联到货';
     if (!byDate[adate]) byDate[adate] = { arrival_date: adate, po_map: {} };
     if (!byDate[adate].po_map[r.po_code]) byDate[adate].po_map[r.po_code] = { po_code: r.po_code, error_count: 0, has_error: false, records: [] };
     const p = byDate[adate].po_map[r.po_code];
@@ -1386,8 +1387,8 @@ app.get('/api/po/overview', (req, res) => {
     arrival_date: g.arrival_date,
     pos: Object.values(g.po_map).sort((a,b)=>a.po_code.localeCompare(b.po_code))
   })).sort((a,b)=>String(b.arrival_date).localeCompare(String(a.arrival_date)));
-  if (!paginated) return res.json(result);
-  res.json({ items: result, total, page, pageSize, hasMore: offset + rows.length < total });
+  if (!paginated) return sendJsonWithOptionalGzip(req, res, result);
+  sendJsonWithOptionalGzip(req, res, { items: result, total, page, pageSize, hasMore: offset + rows.length < total });
 });
 
 // ════════════════════════════════════════
@@ -1411,7 +1412,11 @@ app.get('/api/errors', (req, res) => {
   const { status, date_from, date_to, po_code } = req.query;
   const paginated = Object.prototype.hasOwnProperty.call(req.query, 'page') || Object.prototype.hasOwnProperty.call(req.query, 'pageSize');
   const { page, pageSize, offset } = getPagination(req.query, 50, 100);
-  let sql = `SELECT er.*, pr.box_code as linked_box FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
+  const select = paginated
+    ? `SELECT er.id, er.po_code, er.error_description, er.worker_name, er.review_status,
+        er.linked_po_record_id, er.created_at`
+    : 'SELECT er.*, pr.box_code as linked_box';
+  let sql = `${select} FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
   let countSql = `SELECT COUNT(*) as total FROM error_records er LEFT JOIN po_records pr ON er.linked_po_record_id=pr.id WHERE 1=1`;
   const p = [];
   function addWhere(clause, value) {
@@ -1426,8 +1431,8 @@ app.get('/api/errors', (req, res) => {
   const total = db.prepare(countSql).get(...p).total;
   sql += paginated ? ' ORDER BY er.created_at DESC LIMIT ? OFFSET ?' : ' ORDER BY er.created_at DESC';
   const items = paginated ? db.prepare(sql).all(...p, pageSize, offset) : db.prepare(sql).all(...p);
-  if (!paginated) return res.json(items);
-  res.json({ items, total, page, pageSize, hasMore: offset + items.length < total });
+  if (!paginated) return sendJsonWithOptionalGzip(req, res, items);
+  sendJsonWithOptionalGzip(req, res, { items, total, page, pageSize, hasMore: offset + items.length < total });
 });
 app.post('/api/errors/:id/create-po-record', (req, res) => {
   let copiedPath = null;
@@ -1478,7 +1483,7 @@ app.get('/api/errors/:id', (req, res) => {
     .map(r => ({ ...r, arrival_date: resolvePoArrivalDate(r) }));
   const related_errors = db.prepare('SELECT * FROM error_records WHERE po_code=? AND id!=? ORDER BY created_at DESC').all(record.po_code, record.id);
   const arrival = record.linked_box ? db.prepare('SELECT * FROM arrivals WHERE box_code=? LIMIT 1').get(record.linked_box) : null;
-  res.json({ record, po_records, related_errors, arrival });
+  sendJsonWithOptionalGzip(req, res, { record, po_records, related_errors, arrival });
 });
 app.put('/api/errors/:id/review', (req, res) => {
   try {
