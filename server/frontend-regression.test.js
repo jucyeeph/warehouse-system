@@ -53,6 +53,19 @@ test('admin box manager keeps overview and adds summary view with shared batch a
   assert.match(adminHtml, /\/api\/arrivals\/bulk-clear/);
 });
 
+test('admin box manager renders only the active view', () => {
+  assert.match(adminHtml, /if\(boxView==='overview'\)\s*renderTable\(\);\s*else\s*renderBoxSummary\(\);/);
+});
+
+test('admin reuses short-lived error and PO list caches when switching tabs', () => {
+  assert.match(adminHtml, /if\(t==='errors'\) loadErrors\(true\)/);
+  assert.match(adminHtml, /if\(t==='po'\)\s+loadPoAll\(true\)/);
+  assert.match(adminHtml, /const REVIEW_CACHE_TTL=30_000/);
+  assert.match(adminHtml, /function invalidateReviewCaches/);
+  assert.match(adminHtml, /async function loadErrors\(useCache=false\)/);
+  assert.match(adminHtml, /async function loadPoAll\(useCache=false\)/);
+});
+
 test('admin box summary highlights rows that still have in-transit boxes', () => {
   assert.match(adminHtml, /summary-row-incomplete/);
   assert.match(adminHtml, /row\.missing\.length\?'summary-row-incomplete'/);

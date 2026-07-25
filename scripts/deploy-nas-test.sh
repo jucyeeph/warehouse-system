@@ -129,7 +129,9 @@ expect_ssh "
 set -e
 cd '${NAS_DIR}'
 echo '[部署B] 远端 Docker 命令开始'
-sudo -S /usr/local/bin/docker-compose -f '${COMPOSE_FILE}' up -d --build
+# 测试 NAS 已缓存基础镜像，但外网镜像仓库偶尔不可达。
+# 使用经典构建器可直接复用本地镜像，避免 BuildKit 强制联网读取元数据。
+sudo -S env DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 /usr/local/bin/docker-compose -f '${COMPOSE_FILE}' up -d --build
 " 2>&1 | redact_output
 
 echo "[部署B] 等待服务启动并检查健康状态..."

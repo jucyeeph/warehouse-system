@@ -568,6 +568,40 @@ test('shipment segments preserve split supplier order in overview and table meta
   assert.deepEqual(table.body.date_meta['20260523'].segments.map(s => `${s.type_code}:${s.count}`), ['DSH:26', 'LCC:3', 'DSH:1']);
 });
 
+test('box table uses gzip when the client supports it', async () => {
+  const response = await fetch(`http://127.0.0.1:${PORT}/api/boxes/table`, {
+    headers: { 'Accept-Encoding': 'gzip' }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'gzip');
+  assert.match(response.headers.get('vary') || '', /Accept-Encoding/i);
+  const body = await response.json();
+  assert.ok(Array.isArray(body.shipment_dates));
+});
+
+test('error and PO review endpoints use gzip and keep paginated error rows compact', async () => {
+  for (const endpoint of [
+    '/api/errors?page=1&pageSize=50',
+    '/api/po/overview?page=1&pageSize=50&sort=created_at&dir=DESC'
+  ]) {
+    const response = await fetch(`http://127.0.0.1:${PORT}${endpoint}`, {
+      headers: { 'Accept-Encoding': 'gzip' }
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-encoding'), 'gzip');
+    assert.match(response.headers.get('vary') || '', /Accept-Encoding/i);
+    const body = await response.json();
+    assert.ok(Array.isArray(body.items));
+  }
+
+  const errors = await getJson('/api/errors?page=1&pageSize=50');
+  assert.equal(errors.status, 200);
+  if (errors.body.items.length) {
+    assert.equal(Object.hasOwn(errors.body.items[0], 'photo_path'), false);
+    assert.equal(Object.hasOwn(errors.body.items[0], 'review_notes'), false);
+  }
+});
+
 test('bulk clear arrivals removes selected boxes and returns them to in-transit table state', async () => {
   const payload = {
     shipment_date: '2026-05-25',
